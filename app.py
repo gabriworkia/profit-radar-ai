@@ -423,11 +423,19 @@ def train_model():
         df["rv_abs"] = df["rv"].abs()
         df["adr_residual_pct"] = 100 - df["adr_pct"]
         
-        feature_cols = ["rv", "adx", "adr_pct", "rv_abs", "adr_residual_pct",
-                        "nm", "nm_accel", "nm_dist", "is_compressing"]
+        # Core features (sempre presenti nei trade con dati analitici)
+        feature_cols = ["rv", "adx", "adr_pct", "rv_abs", "adr_residual_pct"]
         
-        # Solo righe con feature valide
-        df = df.dropna(subset=feature_cols + ["won"])
+        # Optional features (possono mancare nei trade storici)
+        optional_features = ["nm", "nm_accel", "nm_dist", "is_compressing"]
+        for feat in optional_features:
+            if feat in df.columns:
+                # Riempi i NaN con 0 per i trade storici senza questi dati
+                df[feat] = df[feat].fillna(0)
+                feature_cols.append(feat)
+        
+        # Solo righe con feature core valide + won
+        df = df.dropna(subset=["rv", "adx", "adr_pct", "won"])
         
         if len(df) < MIN_FEEDBACK_FOR_TRAIN:
             return {"error": f"Dati puliti insufficienti: {len(df)}"}
