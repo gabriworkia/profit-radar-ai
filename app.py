@@ -56,8 +56,10 @@ feature_names = [
     # Contesto mercato
     "ctx_total", "ctx_non_gray", "ctx_green", "ctx_red",
     "ctx_avg_abs_rv", "ctx_extreme_rv",
-    # Feature derivata
+    # Feature derivate
     "rv_decel", "adr_residual_pct",
+    # Momentum metrics
+    "nm", "nm_signal", "nm_accel", "nm_dist", "is_compressing",
 ]
 
 # ============================================================
@@ -99,6 +101,13 @@ def rules_based_score(data):
     ctx_extreme = int(ctx.get("extreme_rv", 0))
     
     module = data.get("module", "STD").upper()
+    
+    # --- Momentum metrics ---
+    nm = float(data.get("nm", 0))
+    nm_signal = float(data.get("nm_signal", 0))
+    nm_accel = float(data.get("nm_accel", 0))
+    nm_dist = float(data.get("nm_dist", 0))
+    is_compressing = data.get("is_compressing", False)
     
     # --- Fattori positivi (+confidenza) ---
     
@@ -196,6 +205,50 @@ def rules_based_score(data):
         # ADR alto = trend maturo
         if adr_pct >= 80:
             score += 5
+    
+    # --- Momentum Normalized System ---
+    
+    # NM concorde con direzione (+8)
+    if direction == "BUY" and nm > 0:
+        score += 8
+    elif direction == "SELL" and nm < 0:
+        score += 8
+    elif direction == "BUY" and nm < -0.3:
+        score -= 10  # Contro-trend forte
+    elif direction == "SELL" and nm > 0.3:
+        score -= 10
+    
+    # Acceleration concorde (+6)
+    if direction == "BUY" and nm_accel > 0:
+        score += 6
+    elif direction == "SELL" and nm_accel < 0:
+        score += 6
+    elif direction == "BUY" and nm_accel < -0.1:
+        score -= 5  # Momentum che decelera
+    elif direction == "SELL" and nm_accel > 0.1:
+        score -= 5
+    
+    # NM sopra Signal = trend vivo (+5)
+    if direction == "BUY" and nm > nm_signal:
+        score += 5
+    elif direction == "SELL" and nm < nm_signal:
+        score += 5
+    
+    # Compressione = potenziale breakout (+7 per BRK, -3 per STD)
+    if is_compressing:
+        if module == "BRK":
+            score += 7  # Breakout imminente!
+        else:
+            score -= 3  # Aspetta il breakout
+    
+    # Distance alta = trend forte (+3)
+    if nm_dist > 0.5:
+        if (direction == "BUY" and nm > 0) or (direction == "SELL" and nm < 0):
+            score += 3
+    
+    # Distance bassa ma non compressione = trend debole (-4)
+    if nm_dist < 0.15 and not is_compressing:
+        score -= 4
     
     # --- Contesto mercato ---
     # Tanti cross nella stessa direzione = conferma (+3)
@@ -365,7 +418,8 @@ def train_model():
         df["rv_abs"] = df["rv"].abs()
         df["adr_residual_pct"] = 100 - df["adr_pct"]
         
-        feature_cols = ["rv", "adx", "adr_pct", "rv_abs", "adr_residual_pct"]
+        feature_cols = ["rv", "adx", "adr_pct", "rv_abs", "adr_residual_pct",
+                        "nm", "nm_accel", "nm_dist", "is_compressing"]
         
         # Solo righe con feature valide
         df = df.dropna(subset=feature_cols + ["won"])
@@ -541,6 +595,12 @@ def predict():
             "ctx_extreme_rv": int(ctx.get("extreme_rv", 0)),
             "rv_decel": abs(rv_prev) - abs(rv) if abs(rv_prev) > 0 else 0,
             "adr_residual_pct": max(0, 100 - adr_pct),
+            # Momentum metrics
+            "nm": float(data.get("nm", 0)),
+            "nm_signal": float(data.get("nm_signal", 0)),
+            "nm_accel": float(data.get("nm_accel", 0)),
+            "nm_dist": float(data.get("nm_dist", 0)),
+            "is_compressing": 1 if data.get("is_compressing", False) else 0,
         }
         
         # --- Prova modello prima, poi regole ---
