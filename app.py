@@ -33,7 +33,7 @@ EA_STATUS_PATH = os.path.join(DATA_DIR, "ea_status.json")
 AB_RESULTS_PATH = os.path.join(DATA_DIR, "ab_results.csv")
 MIN_FEEDBACK_FOR_TRAIN = int(os.environ.get("MIN_FEEDBACK_FOR_TRAIN", "50"))
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-GPT_MODEL = os.environ.get("GPT_MODEL", "gpt-4o-mini")
+GPT_MODEL = "gpt-5-nano"  # Cambia qui il modello OpenAI
 
 # --- App ---
 app = Flask(__name__)
