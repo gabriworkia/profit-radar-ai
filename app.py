@@ -1441,8 +1441,18 @@ def predict_gpt():
 @app.route("/ab_stats", methods=["GET"])
 def ab_stats():
     """Statistiche A/B test."""
+    result = {
+        "total": 0,
+        "agreement_same": 0,
+        "agreement_diff": 0,
+        "agreement_pct": 0,
+        "gpt_enabled": bool(OPENAI_API_KEY),
+        "gpt_model": GPT_MODEL,
+        "gpt_key_preview": OPENAI_API_KEY[:8] + "..." if len(OPENAI_API_KEY) > 8 else "",
+    }
+
     if not os.path.exists(AB_RESULTS_PATH):
-        return jsonify({"total": 0, "message": "Nessun dato A/B ancora"})
+        return jsonify(result)
 
     try:
         df = pd.read_csv(AB_RESULTS_PATH)
@@ -1879,6 +1889,25 @@ setInterval(refresh,30000);
 </script>
 </body>
 </html>"""
+
+
+@app.route("/diag", methods=["GET"])
+def diag():
+    """Diagnostica completa — verifica configurazione server."""
+    return jsonify({
+        "status": "ok",
+        "openai_key_set": bool(OPENAI_API_KEY),
+        "openai_key_preview": OPENAI_API_KEY[:10] + "..." if len(OPENAI_API_KEY) > 10 else "VUOTA",
+        "openai_key_length": len(OPENAI_API_KEY),
+        "gpt_model": GPT_MODEL,
+        "data_dir": os.path.abspath(DATA_DIR),
+        "files_in_data": os.listdir(DATA_DIR) if os.path.exists(DATA_DIR) else [],
+        "ea_status_exists": os.path.exists(EA_STATUS_PATH),
+        "ea_status": json.load(open(EA_STATUS_PATH)) if os.path.exists(EA_STATUS_PATH) else None,
+        "uptime": stats["started"],
+        "total_predict": stats["total_predict_calls"],
+        "total_feedback": stats["total_feedback_calls"],
+    })
 
 
 @app.route("/dashboard", methods=["GET"])
