@@ -28,6 +28,8 @@ DATA_DIR = os.environ.get("DATA_DIR", "data")
 MODEL_PATH = os.path.join(DATA_DIR, "model.pkl")
 FEEDBACK_PATH = os.path.join(DATA_DIR, "feedback.csv")
 REQUESTS_PATH = os.path.join(DATA_DIR, "requests_log.csv")
+EA_CONFIG_PATH = os.path.join(DATA_DIR, "ea_config.json")
+EA_STATUS_PATH = os.path.join(DATA_DIR, "ea_status.json")
 MIN_FEEDBACK_FOR_TRAIN = int(os.environ.get("MIN_FEEDBACK_FOR_TRAIN", "50"))
 
 # --- App ---
@@ -1082,6 +1084,535 @@ def train_from_github():
     except Exception as e:
         traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 200
+
+
+# ============================================================
+#  EA STATUS & REMOTE CONFIG
+# ============================================================
+
+# --- Default EA config ---
+DEFAULT_EA_CONFIG = {
+    "aggressiveness": 2,
+    "use_ai": True,
+    "ai_min_conf": 70,
+    "max_consec_loss": 2,
+    "max_daily_loss": 3,
+    "max_daily_profit": 3.0,
+    "rv_max": 30,
+    "adr_max": 60.0,
+    "min_rr": 1.5,
+    "breakout_on": True,
+    "reversal_on": False,
+    "fixed_lots": 0.01,
+    "max_concurrent": 10,
+}
+
+ea_status = {
+    "last_update": None,
+    "balance": 0,
+    "equity": 0,
+    "open_trades": 0,
+    "daily_pnl": 0,
+    "daily_wins": 0,
+    "daily_losses": 0,
+    "consecutive_losses": 0,
+    "ai_calls": 0,
+    "ai_confirm": 0,
+    "ai_reject": 0,
+    "ai_errors": 0,
+    "ai_missed_trades": 0,
+    "warmup_ok": False,
+    "warmup_last": None,
+    "data_source": "",
+    "cross_active": 0,
+    "cross_total": 0,
+    "daily_stopped": False,
+    "account_currency": "EUR",
+    "ea_version": "",
+}
+
+
+def load_ea_config():
+    """Carica config EA da file."""
+    if os.path.exists(EA_CONFIG_PATH):
+        try:
+            with open(EA_CONFIG_PATH, "r") as f:
+                cfg = json.load(f)
+            # Merge con defaults per parametri mancanti
+            for k, v in DEFAULT_EA_CONFIG.items():
+                if k not in cfg:
+                    cfg[k] = v
+            return cfg
+        except:
+            pass
+    return dict(DEFAULT_EA_CONFIG)
+
+
+def save_ea_config(cfg):
+    """Salva config EA su file."""
+    ensure_data_dir()
+    with open(EA_CONFIG_PATH, "w") as f:
+        json.dump(cfg, f, indent=2)
+
+
+@app.route("/ea_status", methods=["POST"])
+def receive_ea_status():
+    """L'EA manda i suoi stats ogni candela M15. Riceve indietro la config."""
+    global ea_status
+    try:
+        data = request.get_json(force=True)
+        if not data:
+            return jsonify({"status": "error", "message": "No JSON"}), 200
+
+        # Aggiorna status
+        for key in ea_status:
+            if key in data:
+                ea_status[key] = data[key]
+        ea_status["last_update"] = datetime.now(timezone.utc).isoformat()
+
+        # Salva su file
+        ensure_data_dir()
+        with open(EA_STATUS_PATH, "w") as f:
+            json.dump(ea_status, f, indent=2)
+
+        # Ritorna la config corrente (l'EA la applica)
+        cfg = load_ea_config()
+        return jsonify({"status": "ok", "config": cfg})
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 200
+
+
+@app.route("/ea_config", methods=["GET"])
+def get_ea_config():
+    """Leggi la config EA corrente."""
+    return jsonify(load_ea_config())
+
+
+@app.route("/ea_config", methods=["POST"])
+def update_ea_config():
+    """Aggiorna parametri EA dalla dashboard."""
+    try:
+        data = request.get_json(force=True)
+        if not data:
+            return jsonify({"status": "error", "message": "No JSON"}), 200
+
+        cfg = load_ea_config()
+
+        # Aggiorna solo i campi validi
+        updatable = [
+            "aggressiveness", "use_ai", "ai_min_conf",
+            "max_consec_loss", "max_daily_loss", "max_daily_profit",
+            "rv_max", "adr_max", "min_rr",
+            "breakout_on", "reversal_on",
+            "fixed_lots", "max_concurrent",
+        ]
+        updated = []
+        for key in updatable:
+            if key in data:
+                old_val = cfg.get(key)
+                new_val = data[key]
+                # Tipo corretto
+                if key in ("use_ai", "breakout_on", "reversal_on"):
+                    new_val = bool(new_val)
+                elif key in ("adr_max", "max_daily_profit", "min_rr", "fixed_lots"):
+                    new_val = float(new_val)
+                else:
+                    new_val = int(new_val)
+                cfg[key] = new_val
+                if old_val != new_val:
+                    updated.append(f"{key}: {old_val} → {new_val}")
+
+        save_ea_config(cfg)
+
+        return jsonify({
+            "status": "ok",
+            "config": cfg,
+            "updated": updated,
+            "message": f"Aggiornati {len(updated)} parametri. L'EA li applicherà alla prossima candela M15."
+        })
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 200
+
+
+@app.route("/dashboard_data", methods=["GET"])
+def dashboard_data():
+    """API per la dashboard web - tutti i dati in una chiamata."""
+    # EA status
+    ea = dict(ea_status)
+
+    # Server stats
+    srv = dict(stats)
+
+    # Feedback count
+    fb_count = 0
+    trade_history = []
+    if os.path.exists(FEEDBACK_PATH):
+        try:
+            fb_df = pd.read_csv(FEEDBACK_PATH)
+            fb_count = len(fb_df)
+            # Ultimi 20 trade
+            recent = fb_df.tail(20).to_dict("records")
+            for t in recent:
+                t["profit"] = float(t.get("profit", 0))
+                t["pips"] = float(t.get("pips", 0))
+                t["won"] = bool(t.get("won", False))
+                trade_history.append(t)
+        except:
+            pass
+
+    # Config
+    cfg = load_ea_config()
+
+    return jsonify({
+        "ea": ea,
+        "server": srv,
+        "config": cfg,
+        "feedback_count": fb_count,
+        "trade_history": trade_history,
+        "ready_to_train": fb_count >= MIN_FEEDBACK_FOR_TRAIN,
+    })
+
+
+# ============================================================
+#  DASHBOARD HTML
+# ============================================================
+
+DASHBOARD_HTML = """<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Profit Radar Pro - Dashboard</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#0a0a1a;color:#e0e0e0;min-height:100vh}
+.container{max-width:960px;margin:0 auto;padding:12px}
+h1{text-align:center;font-size:1.3em;padding:12px 0;color:#4fc3f7;border-bottom:1px solid #1a1a3a;margin-bottom:10px}
+h1 span{color:#81c784}
+.section{background:#12122a;border-radius:10px;padding:14px;margin-bottom:12px;border:1px solid #1e1e40}
+.section h2{font-size:0.95em;color:#4fc3f7;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.section h2::before{content:'';width:4px;height:16px;background:#4fc3f7;border-radius:2px}
+.row{display:flex;flex-wrap:wrap;gap:8px}
+.card{flex:1;min-width:140px;background:#1a1a35;border-radius:8px;padding:10px;text-align:center}
+.card .val{font-size:1.6em;font-weight:700;line-height:1.3}
+.card .lbl{font-size:0.7em;color:#888;text-transform:uppercase;margin-top:2px}
+.green{color:#81c784}.red{color:#ef5350}.yellow{color:#ffd54f}.blue{color:#4fc3f7}.white{color:#e0e0e0}
+.status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+.dot-green{background:#81c784;box-shadow:0 0 6px #81c784}
+.dot-red{background:#ef5350;box-shadow:0 0 6px #ef5350}
+.dot-yellow{background:#ffd54f;box-shadow:0 0 6px #ffd54f}
+.dot-gray{background:#666}
+table{width:100%;border-collapse:collapse;font-size:0.78em}
+th{text-align:left;padding:6px 8px;background:#1a1a35;color:#888;text-transform:uppercase;font-size:0.85em;border-bottom:1px solid #2a2a50}
+td{padding:5px 8px;border-bottom:1px solid #15152a}
+tr:hover{background:#1a1a35}
+.btn{display:inline-block;padding:8px 16px;border:none;border-radius:6px;cursor:pointer;font-size:0.85em;font-weight:600;transition:all .2s}
+.btn:hover{transform:translateY(-1px);opacity:0.9}
+.btn-green{background:#2e7d32;color:#fff}.btn-blue{background:#1565c0;color:#fff}
+.btn-red{background:#b71c1c;color:#fff}.btn-gray{background:#333;color:#ccc}
+.btn-yellow{background:#f57f17;color:#fff}
+.btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.config-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-top:8px}
+.cfg-item{background:#1a1a35;border-radius:6px;padding:10px}
+.cfg-item label{display:block;font-size:0.75em;color:#888;margin-bottom:4px;text-transform:uppercase}
+.cfg-item input,.cfg-item select{width:100%;padding:6px 8px;background:#0a0a1a;border:1px solid #2a2a50;border-radius:4px;color:#e0e0e0;font-size:0.9em}
+.cfg-item input[type=checkbox]{width:auto}
+.refresh-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:0.8em;color:#666}
+@media(max-width:600px){.card{min-width:100px}.card .val{font-size:1.3em}.config-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="container">
+<h1>📡 Profit Radar <span>Pro</span> — Dashboard</h1>
+
+<div class="refresh-bar">
+  <span id="lastUpdate">Caricamento...</span>
+  <span><span class="status-dot dot-gray" id="eaDot"></span><span id="eaStatus">-</span></span>
+</div>
+
+<!-- ACCOUNT -->
+<div class="section">
+<h2>Account</h2>
+<div class="row">
+  <div class="card"><div class="val white" id="balance">-</div><div class="lbl">Balance EUR</div></div>
+  <div class="card"><div class="val white" id="equity">-</div><div class="lbl">Equity EUR</div></div>
+  <div class="card"><div class="val" id="dailyPnl">-</div><div class="lbl">P&L Oggi</div></div>
+  <div class="card"><div class="val" id="openTrades">-</div><div class="lbl">Trade Aperti</div></div>
+</div>
+</div>
+
+<!-- AI STATS -->
+<div class="section">
+<h2>AI Engine</h2>
+<div class="row">
+  <div class="card"><div class="val blue" id="aiCalls">-</div><div class="lbl">Chiamate AI</div></div>
+  <div class="card"><div class="val green" id="aiConfirm">-</div><div class="lbl">Confermati</div></div>
+  <div class="card"><div class="val yellow" id="aiReject">-</div><div class="lbl">Rifiutati</div></div>
+  <div class="card"><div class="val red" id="aiErrors">-</div><div class="lbl">Errori</div></div>
+  <div class="card"><div class="val red" id="aiMissed">-</div><div class="lbl">Trade Persi</div></div>
+</div>
+</div>
+
+<!-- MERCATO -->
+<div class="section">
+<h2>Mercato</h2>
+<div class="row">
+  <div class="card"><div class="val white" id="crossTotal">-</div><div class="lbl">Cross Totali</div></div>
+  <div class="card"><div class="val blue" id="crossActive">-</div><div class="lbl">Cross Attivi</div></div>
+  <div class="card"><div class="val" id="dailyWL">-</div><div class="lbl">W / L Oggi</div></div>
+  <div class="card"><div class="val" id="consecLoss">-</div><div class="lbl">Loss Consec.</div></div>
+</div>
+</div>
+
+<!-- CONFIGURAZIONE EA -->
+<div class="section">
+<h2>Configurazione EA</h2>
+<div class="config-grid">
+  <div class="cfg-item">
+    <label>Aggressivita'</label>
+    <select id="cfgAggr" onchange="updateConfig()">
+      <option value="1">1 - Conservativo</option>
+      <option value="2" selected>2 - Moderato</option>
+      <option value="3">3 - Aggressivo</option>
+    </select>
+  </div>
+  <div class="cfg-item">
+    <label>AI Attiva</label>
+    <select id="cfgAI" onchange="updateConfig()">
+      <option value="true">SI - Obbligatoria</option>
+      <option value="false">NO - Disattivata</option>
+    </select>
+  </div>
+  <div class="cfg-item">
+    <label>Confidenza minima %</label>
+    <input type="number" id="cfgMinConf" value="70" min="50" max="95" onchange="updateConfig()">
+  </div>
+  <div class="cfg-item">
+    <label>Max loss consecutivi</label>
+    <input type="number" id="cfgMaxCLoss" value="2" min="1" max="5" onchange="updateConfig()">
+  </div>
+  <div class="cfg-item">
+    <label>Max loss giornalieri</label>
+    <input type="number" id="cfgMaxDLoss" value="3" min="1" max="8" onchange="updateConfig()">
+  </div>
+  <div class="cfg-item">
+    <label>Max profitto giornaliero %</label>
+    <input type="number" id="cfgMaxProf" value="3.0" min="1" max="10" step="0.5" onchange="updateConfig()">
+  </div>
+  <div class="cfg-item">
+    <label>RV massimo</label>
+    <input type="number" id="cfgRVMax" value="30" min="10" max="50" onchange="updateConfig()">
+  </div>
+  <div class="cfg-item">
+    <label>ADR% massimo</label>
+    <input type="number" id="cfgADRMax" value="60" min="30" max="90" onchange="updateConfig()">
+  </div>
+  <div class="cfg-item">
+    <label>R:R minimo</label>
+    <input type="number" id="cfgMinRR" value="1.5" min="1.0" max="3.0" step="0.1" onchange="updateConfig()">
+  </div>
+  <div class="cfg-item">
+    <label>Breakout</label>
+    <select id="cfgBrk" onchange="updateConfig()">
+      <option value="true">Attivo</option>
+      <option value="false">Disattivo</option>
+    </select>
+  </div>
+  <div class="cfg-item">
+    <label>Reversal</label>
+    <select id="cfgRev" onchange="updateConfig()">
+      <option value="true">Attivo</option>
+      <option value="false" selected>Disattivo</option>
+    </select>
+  </div>
+</div>
+<div class="btn-row">
+  <button class="btn btn-blue" onclick="saveAllConfig()">💾 Salva Configurazione</button>
+  <span id="cfgMsg" style="color:#81c784;font-size:0.8em;align-self:center"></span>
+</div>
+</div>
+
+<!-- TRADE HISTORY -->
+<div class="section">
+<h2>Ultimi 20 Trade</h2>
+<div style="overflow-x:auto">
+<table>
+<thead><tr><th>Simbolo</th><th>Dir</th><th>Modulo</th><th>Pips</th><th>Profitto</th><th>Risultato</th><th>AI Conf</th></tr></thead>
+<tbody id="tradeTable"><tr><td colspan="7" style="text-align:center;color:#666">Nessun trade</td></tr></tbody>
+</table>
+</div>
+</div>
+
+<!-- AZIONI -->
+<div class="section">
+<h2>Azioni</h2>
+<div class="btn-row">
+  <button class="btn btn-green" onclick="retrain()">🔄 Riaddestra Modello</button>
+  <button class="btn btn-blue" onclick="trainGithub()">📥 Importa da GitHub + Train</button>
+  <button class="btn btn-gray" onclick="refresh()">🔃 Aggiorna Adesso</button>
+</div>
+<div id="actionMsg" style="margin-top:8px;font-size:0.8em;color:#ffd54f"></div>
+</div>
+
+<div style="text-align:center;padding:16px 0;font-size:0.7em;color:#444">
+  Profit Radar Pro v3.0 — Giovanni Mori — Account 22157346
+</div>
+</div>
+
+<script>
+const API=window.location.origin;
+let pendingConfig={};
+
+function fmt(v,d=2){return v!=null?v.toFixed(d):'-'}
+function pnlClass(v){return v>0?'green':v<0?'red':'white'}
+
+function refresh(){
+  fetch(API+'/dashboard_data').then(r=>r.json()).then(d=>{
+    const ea=d.ea,srv=d.server,cfg=d.config;
+
+    // Connection status
+    const dot=document.getElementById('eaDot');
+    const age=ea.last_update?((Date.now()-new Date(ea.last_update))/1000/60):999;
+    if(age<5){dot.className='status-dot dot-green';document.getElementById('eaStatus').textContent='EA Connesso'}
+    else if(age<30){dot.className='status-dot dot-yellow';document.getElementById('eaStatus').textContent='EA connesso '+Math.round(age)+'m fa'}
+    else{dot.className='status-dot dot-gray';document.getElementById('eaStatus').textContent='EA offline'}
+
+    document.getElementById('lastUpdate').textContent='Aggiornato: '+new Date().toLocaleTimeString('it-IT');
+
+    // Account
+    document.getElementById('balance').textContent=fmt(ea.balance);
+    document.getElementById('equity').textContent=fmt(ea.equity);
+    const pnl=ea.daily_pnl||0;
+    const pnlEl=document.getElementById('dailyPnl');
+    pnlEl.textContent=(pnl>=0?'+':'')+fmt(pnl);
+    pnlEl.className='val '+pnlClass(pnl);
+    document.getElementById('openTrades').textContent=ea.open_trades+'/'+(cfg.max_concurrent||10);
+
+    // AI
+    document.getElementById('aiCalls').textContent=ea.ai_calls||0;
+    document.getElementById('aiConfirm').textContent=ea.ai_confirm||0;
+    document.getElementById('aiReject').textContent=ea.ai_reject||0;
+    document.getElementById('aiErrors').textContent=ea.ai_errors||0;
+    const missEl=document.getElementById('aiMissed');
+    missEl.textContent=ea.ai_missed_trades||0;
+    missEl.className='val '+(ea.ai_missed_trades>0?'red':'green');
+
+    // Market
+    document.getElementById('crossTotal').textContent=ea.cross_total||0;
+    document.getElementById('crossActive').textContent=ea.cross_active||0;
+    document.getElementById('dailyWL').textContent=(ea.daily_wins||0)+' / '+(ea.daily_losses||0);
+    document.getElementById('dailyWL').className='val';
+    const clEl=document.getElementById('consecLoss');
+    clEl.textContent=ea.consecutive_losses||0;
+    clEl.className='val '+((ea.consecutive_losses||0)>=2?'red':'white');
+
+    // Config form
+    document.getElementById('cfgAggr').value=cfg.aggressiveness||2;
+    document.getElementById('cfgAI').value=cfg.use_ai?'true':'false';
+    document.getElementById('cfgMinConf').value=cfg.ai_min_conf||70;
+    document.getElementById('cfgMaxCLoss').value=cfg.max_consec_loss||2;
+    document.getElementById('cfgMaxDLoss').value=cfg.max_daily_loss||3;
+    document.getElementById('cfgMaxProf').value=cfg.max_daily_profit||3.0;
+    document.getElementById('cfgRVMax').value=cfg.rv_max||30;
+    document.getElementById('cfgADRMax').value=cfg.adr_max||60;
+    document.getElementById('cfgMinRR').value=cfg.min_rr||1.5;
+    document.getElementById('cfgBrk').value=cfg.breakout_on?'true':'false';
+    document.getElementById('cfgRev').value=cfg.reversal_on?'true':'false';
+
+    // Trade history
+    const tb=document.getElementById('tradeTable');
+    if(d.trade_history&&d.trade_history.length>0){
+      tb.innerHTML=d.trade_history.reverse().map(t=>{
+        const p=t.profit||0;
+        const w=t.won;
+        return '<tr>'+
+          '<td>'+(t.symbol||'-')+'</td>'+
+          '<td>'+(t.direction||'-')+'</td>'+
+          '<td>'+(t.module||'-')+'</td>'+
+          '<td>'+fmt(t.pips,1)+'</td>'+
+          '<td class="'+pnlClass(p)+'">'+(p>=0?'+':'')+fmt(p)+'€</td>'+
+          '<td><span style="color:'+(w?'#81c784':'#ef5350')+'">'+(w?'WIN':'LOSS')+'</span></td>'+
+          '<td>'+(t.ai_confidence||'-')+'%</td>'+
+          '</tr>'
+      }).join('');
+    }
+
+  }).catch(e=>console.error('Fetch error:',e));
+}
+
+function updateConfig(){
+  // Just store pending, don't save yet
+}
+
+function saveAllConfig(){
+  const cfg={
+    aggressiveness:parseInt(document.getElementById('cfgAggr').value),
+    use_ai:document.getElementById('cfgAI').value==='true',
+    ai_min_conf:parseInt(document.getElementById('cfgMinConf').value),
+    max_consec_loss:parseInt(document.getElementById('cfgMaxCLoss').value),
+    max_daily_loss:parseInt(document.getElementById('cfgMaxDLoss').value),
+    max_daily_profit:parseFloat(document.getElementById('cfgMaxProf').value),
+    rv_max:parseInt(document.getElementById('cfgRVMax').value),
+    adr_max:parseFloat(document.getElementById('cfgADRMax').value),
+    min_rr:parseFloat(document.getElementById('cfgMinRR').value),
+    breakout_on:document.getElementById('cfgBrk').value==='true',
+    reversal_on:document.getElementById('cfgRev').value==='true',
+  };
+  fetch(API+'/ea_config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)})
+    .then(r=>r.json()).then(d=>{
+      const msg=document.getElementById('cfgMsg');
+      if(d.status==='ok'){
+        msg.textContent='✅ '+d.message;
+        msg.style.color='#81c784';
+      }else{
+        msg.textContent='❌ Errore: '+(d.message||'unknown');
+        msg.style.color='#ef5350';
+      }
+      setTimeout(()=>{msg.textContent=''},5000);
+    }).catch(e=>{
+      document.getElementById('cfgMsg').textContent='❌ Errore connessione';
+      document.getElementById('cfgMsg').style.color='#ef5350';
+    });
+}
+
+function retrain(){
+  document.getElementById('actionMsg').textContent='⏳ Riaddestramento in corso...';
+  fetch(API+'/retrain',{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(d.status==='trained'){
+      document.getElementById('actionMsg').innerHTML='✅ Modello addestrato! Samples: '+d.samples+
+        ' | Win rate: '+d.win_rate+'% | Versione: '+d.version;
+    }else{
+      document.getElementById('actionMsg').innerHTML='⚠️ '+(d.error||'Non abbastanza dati');
+    }
+  }).catch(e=>{document.getElementById('actionMsg').textContent='❌ Errore'});
+}
+
+function trainGithub(){
+  document.getElementById('actionMsg').textContent='⏳ Importazione da GitHub + Training...';
+  fetch(API+'/train_from_github',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+    .then(r=>r.json()).then(d=>{
+      let msg='✅ Importati '+d.new_imported+' trade | Totale: '+d.total_feedback;
+      if(d.train_result)msg+=' | Train: '+JSON.stringify(d.train_result).substring(0,100);
+      else if(d.ready_to_train)msg+=' | Pronto per training!';
+      document.getElementById('actionMsg').innerHTML=msg;
+    }).catch(e=>{document.getElementById('actionMsg').textContent='❌ Errore'});
+}
+
+// Auto-refresh ogni 30 secondi
+refresh();
+setInterval(refresh,30000);
+</script>
+</body>
+</html>"""
+
+
+@app.route("/dashboard", methods=["GET"])
+def dashboard():
+    """Dashboard web completa."""
+    from flask import Response
+    return Response(DASHBOARD_HTML, mimetype="text/html")
 
 
 # ============================================================
