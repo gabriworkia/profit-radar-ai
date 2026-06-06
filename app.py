@@ -30,7 +30,10 @@ FEEDBACK_PATH = os.path.join(DATA_DIR, "feedback.csv")
 REQUESTS_PATH = os.path.join(DATA_DIR, "requests_log.csv")
 EA_CONFIG_PATH = os.path.join(DATA_DIR, "ea_config.json")
 EA_STATUS_PATH = os.path.join(DATA_DIR, "ea_status.json")
+AB_RESULTS_PATH = os.path.join(DATA_DIR, "ab_results.csv")
 MIN_FEEDBACK_FOR_TRAIN = int(os.environ.get("MIN_FEEDBACK_FOR_TRAIN", "50"))
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+GPT_MODEL = os.environ.get("GPT_MODEL", "gpt-4o-mini")
 
 # --- App ---
 app = Flask(__name__)
@@ -1276,6 +1279,244 @@ def dashboard_data():
 
 
 # ============================================================
+#  GPT A/B TEST MODULE
+# ============================================================
+
+GPT_SYSTEM_PROMPT = """Sei un analista forex quantitativo esperto. Valuta trade candidate ricevendo dati tecnici completi.
+
+Il trader ha queste caratteristiche storiche:
+- Win rate: ~41%
+- Account: piccolo ( EUR), lotto fisso 0.01
+- Usa un EA su M15 con 3 moduli: Standard, Breakout, Reversal
+- Il modello LightGBM interno ha imparato:
+  - ADX alto (>50) + ADR estremo (>100%) = spesso LOSS
+  - ADR basso (<55%) + RV moderato (5-25) = più probabile WIN
+  - ADR > 77% = trade rischiosi, spesso rifiutati
+
+Indicatori chiave:
+- Radar Value (RV): forza/direzione trend. Estremo se |RV|>40
+- ADX: forza trend. >40 forte, <20 debole
+- ADR%: range giornaliero usato. <50% molto spazio, >100% esausto
+- Histogram: GREEN_LIGHT=rialzo forte, RED_LIGHT=ribasso forte, GRAY=neutrale
+- Normalized Momentum: positivo=rialzista, negativo=ribassista
+- Compression: mercato pronto per breakout
+
+REGOLE:
+- Se i dati sono insufficienti o ambigui, dai confidenza bassa (<50)
+- Non avere paura di dire HOLD se il trade non è chiaro
+- Considera sempre il contesto: quanti cross sono attivi, quanti nella stessa direzione
+
+Rispondi SOLO in JSON valido, nient'altro:
+{"signal":"BUY" o "SELL" o "HOLD","confidence":0-100,"reasoning":"motivo in 1 frase"}"""
+
+
+def call_gpt(data):
+    """Chiama GPT-4o-mini per valutare un trade."""
+    if not OPENAI_API_KEY:
+        return {"signal": "HOLD", "confidence": 0, "reasoning": "API key non configurata", "error": True}
+
+    try:
+        import urllib.request
+
+        # Costruisci il messaggio utente con tutti i dati
+        rv = float(data.get("rv", 0))
+        adx = float(data.get("adx", 0))
+        adr_pct = float(data.get("adr_pct", 0))
+        adr_pip = float(data.get("adr_pip", 0))
+        adr_media = float(data.get("adr_media", 0))
+        direction = data.get("direction", "BUY")
+        module = data.get("module", "STD")
+        hist = data.get("hist", "UNKNOWN")
+        ema_pos = int(data.get("ema_pos", 0))
+        symbol = data.get("symbol", "")
+        nm = float(data.get("nm", 0))
+        nm_accel = float(data.get("nm_accel", 0))
+        nm_dist = float(data.get("nm_dist", 0))
+        is_compress = data.get("is_compressing", False)
+
+        ctx = data.get("context", {})
+        ctx_total = int(ctx.get("total", 0))
+        ctx_active = int(ctx.get("non_gray", 0))
+        ctx_green = int(ctx.get("green", 0))
+        ctx_red = int(ctx.get("red", 0))
+
+        user_msg = f"""Valuta questo trade:
+Simbolo: {symbol}
+Direzione proposta: {direction}
+Modulo: {module}
+Radar Value: {rv}
+ADX(14): {adx}
+ADR%: {adr_pct}% ({adr_pip} pip fatti su {adr_media} media)
+Histogram: {hist}
+EMA Position: {ema_pos} ({'rialzista' if ema_pos == 1 else 'ribassista'})
+Normalized Momentum: {nm}
+Momentum Acceleration: {nm_accel}
+Momentum Distance: {nm_dist}
+Compression: {'Sì' if is_compress else 'No'}
+Contesto: {ctx_active}/{ctx_total} cross attivi, {ctx_green} green, {ctx_red} red"""
+
+        payload = {
+            "model": GPT_MODEL,
+            "messages": [
+                {"role": "system", "content": GPT_SYSTEM_PROMPT},
+                {"role": "user", "content": user_msg}
+            ],
+            "temperature": 0.3,
+            "max_tokens": 150,
+            "response_format": {"type": "json_object"}
+        }
+
+        payload_bytes = json.dumps(payload).encode("utf-8")
+
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/chat/completions",
+            data=payload_bytes,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {OPENAI_API_KEY}"
+            },
+            method="POST"
+        )
+
+        with urllib.request.urlopen(req, timeout=10) as response:
+            result = json.loads(response.read().decode("utf-8"))
+
+        content = result["choices"][0]["message"]["content"]
+        gpt_response = json.loads(content)
+
+        return {
+            "signal": gpt_response.get("signal", "HOLD").upper(),
+            "confidence": min(100, max(0, int(gpt_response.get("confidence", 0)))),
+            "reasoning": gpt_response.get("reasoning", ""),
+            "model": GPT_MODEL,
+            "error": False
+        }
+
+    except Exception as e:
+        print(f"[GPT ERROR] {e}")
+        traceback.print_exc()
+        return {"signal": "HOLD", "confidence": 0, "reasoning": str(e), "error": True}
+
+
+@app.route("/predict_gpt", methods=["POST"])
+def predict_gpt():
+    """Endpoint A/B test: chiama GPT e logga il risultato."""
+    try:
+        data = request.get_json(force=True)
+        if not data:
+            return jsonify({"signal": "HOLD", "confidence": 0, "reasoning": "No JSON"}), 200
+
+        # Chiama GPT
+        gpt_result = call_gpt(data)
+
+        # Logga il risultato A/B
+        ensure_data_dir()
+        ab_row = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "symbol": data.get("symbol", ""),
+            "direction": data.get("direction", ""),
+            "module": data.get("module", ""),
+            "rv": data.get("rv", 0),
+            "adx": data.get("adx", 0),
+            "adr_pct": data.get("adr_pct", 0),
+            "hist": data.get("hist", ""),
+            "lgbm_signal": data.get("direction", ""),
+            "lgbm_conf": data.get("ai_confidence", 0),
+            "gpt_signal": gpt_result.get("signal", ""),
+            "gpt_conf": gpt_result.get("confidence", 0),
+            "gpt_reasoning": gpt_result.get("reasoning", ""),
+            "agreement": "SAME" if data.get("direction", "").upper() == gpt_result.get("signal", "").upper() else "DIFF",
+        }
+
+        df_row = pd.DataFrame([ab_row])
+        header = not os.path.exists(AB_RESULTS_PATH)
+        df_row.to_csv(AB_RESULTS_PATH, mode="a", header=header, index=False)
+
+        return jsonify(gpt_result)
+
+    except Exception as e:
+        return jsonify({"signal": "HOLD", "confidence": 0, "reasoning": str(e), "error": True}), 200
+
+
+@app.route("/ab_stats", methods=["GET"])
+def ab_stats():
+    """Statistiche A/B test."""
+    if not os.path.exists(AB_RESULTS_PATH):
+        return jsonify({"total": 0, "message": "Nessun dato A/B ancora"})
+
+    try:
+        df = pd.read_csv(AB_RESULTS_PATH)
+        total = len(df)
+        same = len(df[df["agreement"] == "SAME"])
+        diff = len(df[df["agreement"] == "DIFF"])
+
+        stats = {
+            "total": total,
+            "agreement_same": same,
+            "agreement_diff": diff,
+            "agreement_pct": round(same / total * 100, 1) if total > 0 else 0,
+            "gpt_enabled": bool(OPENAI_API_KEY),
+            "gpt_model": GPT_MODEL,
+        }
+
+        # Se abbiamo colonne won nei risultati (dopo feedback)
+        if "won" in df.columns:
+            won_df = df.dropna(subset=["won"])
+            if len(won_df) > 0:
+                # GPT agree + trade won
+                agree_won = len(won_df[(won_df["agreement"] == "SAME") & (won_df["won"] == True)])
+                agree_total = len(won_df[won_df["agreement"] == "SAME"])
+                # GPT disagree + trade won
+                disagree_won = len(won_df[(won_df["agreement"] == "DIFF") & (won_df["won"] == True)])
+                disagree_total = len(won_df[won_df["agreement"] == "DIFF"])
+
+                stats["agree_winrate"] = round(agree_won / agree_total * 100, 1) if agree_total > 0 else 0
+                stats["disagree_winrate"] = round(disagree_won / disagree_total * 100, 1) if disagree_total > 0 else 0
+                stats["feedback_received"] = len(won_df)
+
+        return jsonify(stats)
+
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+
+@app.route("/ab_feedback", methods=["POST"])
+def ab_feedback():
+    """Aggiorna i risultati A/B con l'esito del trade."""
+    try:
+        data = request.get_json(force=True)
+        if not data or not os.path.exists(AB_RESULTS_PATH):
+            return jsonify({"status": "error", "message": "No data or no AB file"}), 200
+
+        symbol = data.get("symbol", "")
+        direction = data.get("direction", "")
+        timestamp_approx = data.get("timestamp", "")
+
+        df = pd.read_csv(AB_RESULTS_PATH)
+
+        # Trova la riga più recente per questo simbolo+direzione
+        mask = (df["symbol"] == symbol) & (df["direction"] == direction)
+        candidates = df[mask]
+
+        if len(candidates) == 0:
+            return jsonify({"status": "not_found"}), 200
+
+        # Prendi l'ultima riga
+        last_idx = candidates.index[-1]
+
+        df.loc[last_idx, "won"] = data.get("won", False)
+        df.loc[last_idx, "profit"] = data.get("profit", 0)
+        df.loc[last_idx, "pips"] = data.get("pips", 0)
+
+        df.to_csv(AB_RESULTS_PATH, index=False)
+
+        return jsonify({"status": "ok", "updated": True})
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 200
+
+
+# ============================================================
 #  DASHBOARD HTML
 # ============================================================
 
@@ -1445,12 +1686,28 @@ tr:hover{background:#1a1a35}
 </div>
 </div>
 
+<!-- A/B TEST GPT vs LIGHTGBM -->
+<div class="section">
+<h2>🧪 A/B Test: LightGBM vs GPT</h2>
+<div class="row">
+  <div class="card"><div class="val blue" id="abTotal">-</div><div class="lbl">Trade Testati</div></div>
+  <div class="card"><div class="val green" id="abAgree">-</div><div class="lbl">D'Accordo</div></div>
+  <div class="card"><div class="val red" id="abDisagree">-</div><div class="lbl">In Disaccordo</div></div>
+  <div class="card"><div class="val" id="abAgreePct">-</div><div class="lbl">% Accordo</div></div>
+</div>
+<div class="row" style="margin-top:8px">
+  <div class="card"><div class="val" id="abGptStatus">-</div><div class="lbl">GPT Status</div></div>
+  <div class="card"><div class="val white" id="abModel">-</div><div class="lbl">Modello</div></div>
+</div>
+</div>
+
 <!-- AZIONI -->
 <div class="section">
 <h2>Azioni</h2>
 <div class="btn-row">
   <button class="btn btn-green" onclick="retrain()">🔄 Riaddestra Modello</button>
   <button class="btn btn-blue" onclick="trainGithub()">📥 Importa da GitHub + Train</button>
+  <button class="btn btn-yellow" onclick="loadAB()">📊 Carica A/B Stats</button>
   <button class="btn btn-gray" onclick="refresh()">🔃 Aggiorna Adesso</button>
 </div>
 <div id="actionMsg" style="margin-top:8px;font-size:0.8em;color:#ffd54f"></div>
@@ -1598,6 +1855,22 @@ function trainGithub(){
       else if(d.ready_to_train)msg+=' | Pronto per training!';
       document.getElementById('actionMsg').innerHTML=msg;
     }).catch(e=>{document.getElementById('actionMsg').textContent='❌ Errore'});
+}
+
+function loadAB(){
+  fetch(API+'/ab_stats').then(r=>r.json()).then(d=>{
+    document.getElementById('abTotal').textContent=d.total||0;
+    document.getElementById('abAgree').textContent=d.agreement_same||0;
+    document.getElementById('abDisagree').textContent=d.agreement_diff||0;
+    const pct=d.agreement_pct||0;
+    const el=document.getElementById('abAgreePct');
+    el.textContent=pct+'%';
+    el.className='val '+(pct>70?'green':pct>50?'yellow':'red');
+    document.getElementById('abGptStatus').textContent=d.gpt_enabled?'🟢 Attivo':'🔴 No API Key';
+    document.getElementById('abGptStatus').className='val '+(d.gpt_enabled?'green':'red');
+    document.getElementById('abModel').textContent=d.gpt_model||'-';
+    document.getElementById('actionMsg').innerHTML='✅ A/B stats aggiornati: '+d.total+' trade testati';
+  }).catch(e=>{document.getElementById('actionMsg').textContent='❌ Errore A/B stats'});
 }
 
 // Auto-refresh ogni 30 secondi
