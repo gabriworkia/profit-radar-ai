@@ -1,0 +1,14 @@
+{
+  "name": "profit-radar-ai",
+  "version": "1.0.0",
+  "description": "AI Server for Profit Radar Pro EA - LightGBM trade confirmation",
+  "main": "app.py",
+  "scripts": {
+    "start": "gunicorn app:app --workers 1 --threads 2 --timeout 30 --bind 0.0.0.0:$PORT",
+    "dev": "python app.py",
+    "train": "python train_model.py"
+  },
+  "engines": {
+    "python": "3.11.x"
+  }
+}
