@@ -367,6 +367,11 @@ def log_feedback(fb_data):
             "adx": fb_data.get("adx", 0),
             "adr_pct": fb_data.get("adr_pct", 0),
             "hist": fb_data.get("hist", ""),
+            # Momentum features
+            "nm": fb_data.get("nm", 0),
+            "nm_accel": fb_data.get("nm_accel", 0),
+            "nm_dist": fb_data.get("nm_dist", 0),
+            "is_compressing": fb_data.get("is_compressing", False),
         }
         
         df = pd.DataFrame([row])
@@ -954,6 +959,7 @@ def import_csv():
 def train_from_github():
     """
     Importa CSV da GitHub e addestra il modello in un colpo solo.
+    Supporta sia il formato originale che il formato ENRICHED.
     
     Input JSON:
     {
@@ -995,6 +1001,11 @@ def train_from_github():
         sep = ";" if first_line.count(";") > first_line.count(",") else ","
         reader = csv_module.DictReader(io.StringIO(csv_content), delimiter=sep)
         
+        # Rileva formato (originale vs enriched)
+        headers = reader.fieldnames or []
+        is_enriched = "RV_Calc" in headers or "ADX_Calc" in headers
+        print(f"[IMPORT] Formato: {'ENRICHED' if is_enriched else 'ORIGINALE'} | Colonne: {len(headers)}")
+        
         # Leggi feedback esistente per evitare duplicati
         existing_tickets = set()
         if os.path.exists(FEEDBACK_PATH):
@@ -1010,6 +1021,32 @@ def train_from_github():
             ticket = str(row.get("Ticket", row.get("ticket", ""))).strip()
             if ticket and ticket in existing_tickets:
                 continue
+            
+            # --- Estrai RV, ADX, ADR% (formato enriched o originale) ---
+            if is_enriched:
+                rv_str = row.get("RV_Calc", row.get("RV_Original", "0"))
+                adx_str = row.get("ADX_Calc", row.get("ADX_Original", "0"))
+                # ADR%: usa ADR_Pct_Calc se > 0, altrimenti fallback
+                adr_str = row.get("ADR_Pct_Calc", "0")
+                if not adr_str or float(str(adr_str).replace(",", ".") or "0") == 0:
+                    adr_str = row.get("ADR_Original", "0")
+                hist = row.get("Hist_Calc", row.get("Hist_Original", ""))
+                if hist == "UNKNOWN" or not hist:
+                    hist = row.get("Hist_Original", "")
+                # Momentum
+                nm_str = row.get("NM_Calc", "0")
+                nm_accel_str = row.get("NM_Accel_Calc", "0")
+                nm_dist_str = row.get("NM_Dist_Calc", "0")
+                compression_str = row.get("Compression_Calc", "0")
+            else:
+                rv_str = row.get("RV", row.get("rv", "0"))
+                adx_str = row.get("ADX", row.get("adx", "0"))
+                adr_str = row.get("ADR%", row.get("adr_pct", "0"))
+                hist = row.get("Hist", row.get("hist", ""))
+                nm_str = "0"
+                nm_accel_str = "0"
+                nm_dist_str = "0"
+                compression_str = "0"
             
             profit_str = row.get("Profit", row.get("profit", "0"))
             try:
@@ -1035,9 +1072,12 @@ def train_from_github():
             except:
                 pips_val = 0
             
-            rv_str = row.get("RV", row.get("rv", "0"))
-            adx_str = row.get("ADX", row.get("adx", "0"))
-            adr_str = row.get("ADR%", row.get("adr_pct", "0"))
+            # Parse feature values safely
+            def safe_float(s, default=0.0):
+                try:
+                    return float(str(s).replace(",", ".") or str(default))
+                except:
+                    return default
             
             fb_row = {
                 "timestamp": row.get("CloseTime", row.get("close_time", datetime.now(timezone.utc).isoformat())),
@@ -1045,17 +1085,22 @@ def train_from_github():
                 "symbol": row.get("Symbol", row.get("symbol", "")),
                 "direction": direction,
                 "module": row.get("Module", row.get("module", "STD")),
-                "entry_price": float(str(row.get("EntryPrice", row.get("entry_price", "0"))).replace(",", ".") or "0"),
-                "exit_price": float(str(row.get("ExitPrice", row.get("exit_price", "0"))).replace(",", ".") or "0"),
+                "entry_price": safe_float(row.get("EntryPrice", row.get("entry_price", "0"))),
+                "exit_price": safe_float(row.get("ExitPrice", row.get("exit_price", "0"))),
                 "profit": profit_val,
                 "pips": pips_val,
                 "won": won,
-                "ai_confidence": int(str(row.get("AI_Conf", row.get("ai_confidence", "0"))) or "0"),
+                "ai_confidence": int(safe_float(row.get("AI_Conf", row.get("ai_confidence", "0")))),
                 "ai_signal": str(row.get("AI_Signal", row.get("ai_signal", ""))),
-                "rv": float(str(rv_str).replace(",", ".") or "0"),
-                "adx": float(str(adx_str).replace(",", ".") or "0"),
-                "adr_pct": float(str(adr_str).replace(",", ".") or "0"),
-                "hist": str(row.get("Hist", row.get("hist", ""))),
+                "rv": safe_float(rv_str),
+                "adx": safe_float(adx_str),
+                "adr_pct": safe_float(adr_str),
+                "hist": str(hist),
+                # Momentum features
+                "nm": safe_float(nm_str),
+                "nm_accel": safe_float(nm_accel_str),
+                "nm_dist": safe_float(nm_dist_str),
+                "is_compressing": bool(safe_float(compression_str)),
             }
             new_rows.append(fb_row)
         
@@ -1080,6 +1125,7 @@ def train_from_github():
         
         result = {
             "status": "ok",
+            "format": "ENRICHED" if is_enriched else "ORIGINAL",
             "csv_rows_found": imported + len(existing_tickets),
             "new_imported": imported,
             "total_feedback": total_feedback,
