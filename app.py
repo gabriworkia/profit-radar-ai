@@ -653,13 +653,13 @@ def retrain():
 # ============================================================
 #  INIT
 # ============================================================
-@app.before_first_request
-def init():
-    ensure_data_dir()
-    load_model()
-    print(f"[INIT] Server avviato | Data dir: {DATA_DIR}")
-    print(f"[INIT] Modello: {'LOADED' if stats['model_is_trained'] else 'REGOLE (nessun modello)'}")
-    print(f"[INIT] Min feedback per training: {MIN_FEEDBACK_FOR_TRAIN}")
+#  INIT — eseguito direttamente all'avvio del modulo
+# ============================================================
+ensure_data_dir()
+load_model()
+print(f"[INIT] Server avviato | Data dir: {DATA_DIR}")
+print(f"[INIT] Modello: {'LOADED' if stats['model_is_trained'] else 'REGOLE (nessun modello)'}")
+print(f"[INIT] Min feedback per training: {MIN_FEEDBACK_FOR_TRAIN}")
 
 
 if __name__ == "__main__":
