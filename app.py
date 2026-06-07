@@ -286,6 +286,14 @@ def load_model():
             return True
         except Exception as e:
             print(f"[MODEL] Errore caricamento: {e}")
+            # Prova a riaddestrare se ci sono abbastanza feedback
+            print(f"[MODEL] Tentativo retrain automatico...")
+            result = train_model()
+            if result.get("status") == "trained":
+                print(f"[MODEL] Retrain automatico riuscito! v{stats['model_version']}")
+                return True
+            else:
+                print(f"[MODEL] Retrain automatico fallito: {result}")
     return False
 
 
@@ -869,6 +877,27 @@ def update_ea_config():
         return jsonify({"status": "error", "message": str(e)}), 200
 
 
+def sanitize_for_json(obj):
+    """Ricorsivamente pulisce NaN/Inf per JSON valido (i browser non li accettano)."""
+    if isinstance(obj, dict):
+        return {k: sanitize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [sanitize_for_json(v) for v in obj]
+    elif isinstance(obj, float):
+        if np.isnan(obj) or np.isinf(obj):
+            return None
+        return obj
+    elif isinstance(obj, (np.integer,)):
+        return int(obj)
+    elif isinstance(obj, (np.floating,)):
+        if np.isnan(obj) or np.isinf(obj):
+            return None
+        return float(obj)
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
+    return obj
+
+
 @app.route("/dashboard_data", methods=["GET"])
 def dashboard_data():
     ea = dict(ea_status)
@@ -880,17 +909,25 @@ def dashboard_data():
             fb_df = pd.read_csv(FEEDBACK_PATH)
             fb_count = len(fb_df)
             for t in fb_df.tail(20).to_dict("records"):
-                t["profit"] = float(t.get("profit", 0))
-                t["pips"] = float(t.get("pips", 0))
-                t["won"] = bool(t.get("won", False))
+                t["profit"] = float(t.get("profit", 0)) if not pd.isna(t.get("profit", 0)) else 0.0
+                t["pips"] = float(t.get("pips", 0)) if not pd.isna(t.get("pips", 0)) else 0.0
+                t["won"] = bool(t.get("won", False)) if not pd.isna(t.get("won", False)) else False
+                t["ai_signal"] = str(t.get("ai_signal", "")) if not pd.isna(t.get("ai_signal", "")) else ""
+                t["hist"] = str(t.get("hist", "")) if not pd.isna(t.get("hist", "")) else ""
+                t["rv"] = float(t.get("rv", 0)) if not pd.isna(t.get("rv", 0)) else 0.0
+                t["adx"] = float(t.get("adx", 0)) if not pd.isna(t.get("adx", 0)) else 0.0
+                t["adr_pct"] = float(t.get("adr_pct", 0)) if not pd.isna(t.get("adr_pct", 0)) else 0.0
                 trade_history.append(t)
         except: pass
 
-    return jsonify({
+    result = {
         "ea": ea, "server": srv, "config": load_ea_config(),
         "feedback_count": fb_count, "trade_history": trade_history,
         "ready_to_train": fb_count >= MIN_FEEDBACK_FOR_TRAIN,
-    })
+    }
+    # Doppia sicurezza: pulisci tutto da NaN/Inf
+    result = sanitize_for_json(result)
+    return jsonify(result)
 
 
 # ============================================================
@@ -1238,7 +1275,11 @@ function refresh(){
         return '<tr><td>'+(t.symbol||'-')+'</td><td>'+(t.direction||'-')+'</td><td>'+(t.module||'-')+'</td><td>'+fmt(t.pips,1)+'</td><td class="'+pnlClass(p)+'">'+(p>=0?'+':'')+fmt(p)+'€</td><td><span style="color:'+(w?'#81c784':'#ef5350')+'">'+(w?'WIN':'LOSS')+'</span></td><td>'+(t.ai_confidence||'-')+'%</td></tr>'
       }).join('');
     }
-  }).catch(e=>console.error(e));
+  }).catch(e=>{
+    console.error('Dashboard fetch error:',e);
+    document.getElementById('lastUpdate').textContent='❌ Errore connessione al server';
+    document.getElementById('lastUpdate').style.color='#ef5350';
+  });
 }
 function saveAllConfig(){
   const cfg={aggressiveness:parseInt(document.getElementById('cfgAggr').value),use_ai:document.getElementById('cfgAI').value==='true',ai_min_conf:parseInt(document.getElementById('cfgMinConf').value),max_consec_loss:parseInt(document.getElementById('cfgMaxCLoss').value),max_daily_loss:parseInt(document.getElementById('cfgMaxDLoss').value),max_daily_profit:parseFloat(document.getElementById('cfgMaxProf').value),rv_max:parseInt(document.getElementById('cfgRVMax').value),adr_max:parseFloat(document.getElementById('cfgADRMax').value),min_rr:parseFloat(document.getElementById('cfgMinRR').value),breakout_on:document.getElementById('cfgBrk').value==='true',reversal_on:document.getElementById('cfgRev').value==='true'};
