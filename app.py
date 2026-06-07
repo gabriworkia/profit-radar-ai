@@ -32,7 +32,7 @@ MIN_FEEDBACK_FOR_TRAIN = int(os.environ.get("MIN_FEEDBACK_FOR_TRAIN", "50"))
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 GPT_MODEL = "gpt-5-nano"
 
-GITHUB_CSV_URL = "https://raw.githubusercontent.com/gabriworkia/profit-radar-ai/main/data/PRP_TradeLog.csv"
+GITHUB_CSV_URL = "https://raw.githubusercontent.com/gabriworkia/profit-radar-ai/main/Data/PRP_TradeLog.csv"
 
 # ============================================================
 #  APP
@@ -1255,10 +1255,15 @@ function retrain(){
 function trainGithub(){
   document.getElementById('actionMsg').textContent='⏳ Importazione da GitHub...';
   fetch(API+'/train_from_github',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(r=>r.json()).then(d=>{
-    let m='✅ Importati '+d.new_imported+' trade | Totale: '+d.total_feedback;
-    if(d.train_result)m+=' | Train: '+JSON.stringify(d.train_result).substring(0,120);
+    if(d.status==='error'){
+      document.getElementById('actionMsg').innerHTML='❌ Errore: '+(d.message||'unknown')+'<br>💡 '+(d.hint||'');
+      return;
+    }
+    let m='✅ Importati '+(d.new_imported||0)+' trade | Totale: '+(d.total_feedback||0);
+    if(d.train_result) m+=' | Train: '+JSON.stringify(d.train_result).substring(0,150);
+    else if(d.ready_to_train) m+=' | Pronto per training!';
     document.getElementById('actionMsg').innerHTML=m;
-  }).catch(()=>{document.getElementById('actionMsg').textContent='❌ Errore'});
+  }).catch(()=>{document.getElementById('actionMsg').textContent='❌ Errore connessione'});
 }
 function loadAB(){
   fetch(API+'/ab_stats').then(r=>r.json()).then(d=>{
