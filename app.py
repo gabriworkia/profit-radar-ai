@@ -972,7 +972,7 @@ def dashboard_data():
 #  GPT A/B TEST
 # ============================================================
 
-GPT_SYSTEM_PROMPT = """Sei un analista forex quantitativo esperto. Valuta trade candidate ricevendo dati tecnici completi.
+GPT_SYSTEM_PROMPT = """Sei un analista forex quantitativo esperto. Valuta trade candidate e rispondi in formato json.
 
 Il trader ha queste caratteristiche storiche:
 - Win rate: ~41%
@@ -990,7 +990,7 @@ REGOLE:
 - Se i dati sono insufficienti o ambigui, dai confidenza bassa (<50)
 - Non avere paura di dire HOLD se il trade non e' chiaro
 
-Rispondi SOLO in JSON valido: {"signal":"BUY" o "SELL" o "HOLD","confidence":0-100,"reasoning":"motivo in 1 frase"}"""
+Rispondi SOLO con un oggetto json: {"signal":"BUY" o "SELL" o "HOLD","confidence":0-100,"reasoning":"motivo in 1 frase"}"""
 
 
 def call_gpt(data):
@@ -1151,7 +1151,7 @@ def test_gpt():
     payload = {
         "model": GPT_MODEL,
         "messages": [
-            {"role": "user", "content": "Rispondi solo: {\"test\": \"ok\"}"}
+            {"role": "user", "content": "Rispondi solo con json: {\"test\": \"ok\"}"}
         ],
         "max_completion_tokens": 20,
         "response_format": {"type": "json_object"}
