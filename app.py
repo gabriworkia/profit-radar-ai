@@ -222,9 +222,15 @@ def predict_with_model(features_df):
         if not cols:
             return None, 0
         
-        proba = model.predict_proba(features_df[cols])
-        confidence = int(proba[0][1] * 100)
-        signal = "BUY" if proba[0][1] >= 0.5 else "SELL"
+        # LightGBM Booster usa predict() non predict_proba()
+        import lightgbm as lgb
+        raw_pred = model.predict(features_df[cols])
+        if raw_pred is None or len(raw_pred) == 0:
+            return None, 0
+        
+        proba = float(raw_pred[0])  # probabilità classe positiva [0..1]
+        confidence = int(proba * 100)
+        signal = "BUY" if proba >= 0.5 else "SELL"
         return signal, confidence
     except Exception as e:
         print(f"[MODEL ERROR] {e}")
