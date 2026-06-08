@@ -34,7 +34,7 @@ GITHUB_REQUESTS_URL = "https://raw.githubusercontent.com/gabriworkia/profit-rada
 
 MIN_FEEDBACK_FOR_TRAIN = int(os.environ.get("MIN_FEEDBACK_FOR_TRAIN", "50"))
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-GPT_MODEL = "gpt-4o-mini"
+GPT_MODEL = "gpt-5-nano-2025-08-07"
 
 GITHUB_CSV_URL = "https://raw.githubusercontent.com/gabriworkia/profit-radar-ai/main/Data/PRP_TradeLog.csv"
 
