@@ -1153,7 +1153,7 @@ def test_gpt():
         "messages": [
             {"role": "user", "content": "Rispondi solo con json: {\"test\": \"ok\"}"}
         ],
-        "max_completion_tokens": 20,
+        "max_completion_tokens": 200,
         "response_format": {"type": "json_object"}
     }
 
