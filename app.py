@@ -47,8 +47,8 @@ EA_STATUS_PATH = os.path.join(DATA_DIR, "ea_status.json")
 AB_RESULTS_PATH = os.path.join(DATA_DIR, "ab_results.csv")
 
 # GitHub URLs per ripristino post-deploy
-GITHUB_AB_URL = "https://raw.githubusercontent.com/gabriworkia/profit-radar-ai/main/Data/ab_results.csv"
-GITHUB_REQUESTS_URL = "https://raw.githubusercontent.com/gabriworkia/profit-radar-ai/main/Data/requests_log.csv"
+GITHUB_AB_URL = "https://raw.githubusercontent.com/gabriworkia/profit-radar-ai/data-backup/Data/ab_results.csv"
+GITHUB_REQUESTS_URL = "https://raw.githubusercontent.com/gabriworkia/profit-radar-ai/data-backup/Data/requests_log.csv"
 
 MIN_FEEDBACK_FOR_TRAIN = int(os.environ.get("MIN_FEEDBACK_FOR_TRAIN", "50"))
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
@@ -1502,13 +1502,13 @@ def download_file(filename):
 
 @app.route("/save_to_github", methods=["POST"])
 def save_to_github():
-    """Salva i file di log su GitHub via API per persistenza."""
+    """Salva i file di log su GitHub branch 'data-backup' (NON triggera' Render deploy)."""
     github_token = os.environ.get("GITHUB_TOKEN", "")
     if not github_token:
         return jsonify({"error": "GITHUB_TOKEN non configurata. Aggiungila come env var su Render."}), 200
 
     repo = "gabriworkia/profit-radar-ai"
-    branch = "main"
+    branch = "data-backup"  # Branch separato — NON triggera' Render deploy!
     import urllib.request, urllib.error, base64
 
     files_to_save = ["ab_results.csv", "requests_log.csv", "gpt_api.log"]
