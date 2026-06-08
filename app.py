@@ -28,6 +28,10 @@ EA_CONFIG_PATH = os.path.join(DATA_DIR, "ea_config.json")
 EA_STATUS_PATH = os.path.join(DATA_DIR, "ea_status.json")
 AB_RESULTS_PATH = os.path.join(DATA_DIR, "ab_results.csv")
 
+# GitHub URLs per ripristino post-deploy
+GITHUB_AB_URL = "https://raw.githubusercontent.com/gabriworkia/profit-radar-ai/main/Data/ab_results.csv"
+GITHUB_REQUESTS_URL = "https://raw.githubusercontent.com/gabriworkia/profit-radar-ai/main/Data/requests_log.csv"
+
 MIN_FEEDBACK_FOR_TRAIN = int(os.environ.get("MIN_FEEDBACK_FOR_TRAIN", "50"))
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 GPT_MODEL = "gpt-5-nano"
@@ -1361,11 +1365,68 @@ def dashboard():
     return Response(DASHBOARD_HTML, mimetype="text/html")
 
 
+@app.route("/export_logs", methods=["GET"])
+def export_logs():
+    """Mostra i log A/B e requests per download manuale su GitHub."""
+    result = {"ab_results": {"exists": False, "rows": 0}, "requests_log": {"exists": False, "rows": 0}}
+    if os.path.exists(AB_RESULTS_PATH):
+        try:
+            df = pd.read_csv(AB_RESULTS_PATH)
+            result["ab_results"] = {"exists": True, "rows": len(df), "columns": list(df.columns)}
+        except:
+            result["ab_results"] = {"exists": True, "rows": -1, "error": "read failed"}
+    if os.path.exists(REQUESTS_PATH):
+        try:
+            df = pd.read_csv(REQUESTS_PATH)
+            result["requests_log"] = {"exists": True, "rows": len(df), "columns": list(df.columns)}
+        except:
+            result["requests_log"] = {"exists": True, "rows": -1, "error": "read failed"}
+    result["hint"] = "Per salvare su GitHub: copia i file da Data/ nel repo. Il restore è automatico al prossimo deploy."
+    return jsonify(result)
+
+
+# ============================================================
+#  RIPRISTINO LOG DA GITHUB (post-deploy)
+# ============================================================
+def restore_logs_from_github():
+    """Ripristina ab_results.csv e requests_log.csv da GitHub dopo un deploy."""
+    import urllib.request
+    restored = []
+    for name, path, url in [
+        ("ab_results.csv", AB_RESULTS_PATH, GITHUB_AB_URL),
+        ("requests_log.csv", REQUESTS_PATH, GITHUB_REQUESTS_URL),
+    ]:
+        if os.path.exists(path):
+            try:
+                existing = len(pd.read_csv(path))
+                if existing > 0:
+                    print(f"[RESTORE] {name}: già presente ({existing} righe), skip")
+                    continue
+            except:
+                pass
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "ProfitRadarAI/1.0"})
+            with urllib.request.urlopen(req, timeout=10) as response:
+                content = response.read().decode("utf-8")
+            if content and len(content) > 50:
+                with open(path, "w") as f:
+                    f.write(content)
+                rows = content.count("\n")
+                restored.append(f"{name}: {rows} righe")
+                print(f"[RESTORE] {name}: scaricato da GitHub ({rows} righe)")
+            else:
+                print(f"[RESTORE] {name}: file vuoto su GitHub")
+        except Exception as e:
+            print(f"[RESTORE] {name}: non disponibile ({e})")
+    return restored
+
+
 # ============================================================
 #  INIT — All'avvio del server
 # ============================================================
 ensure_data_dir()
 load_model()
+restore_logs_from_github()
 print(f"[INIT] Profit Radar Pro AI Server v4.0")
 print(f"[INIT] Data dir: {DATA_DIR}")
 print(f"[INIT] Modello: {'LOADED' if stats['model_is_trained'] else 'REGOLE (nessun modello)'}")
