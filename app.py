@@ -1049,7 +1049,7 @@ Normalized Momentum: {nm}"""
                 {"role": "system", "content": GPT_SYSTEM_PROMPT},
                 {"role": "user", "content": user_msg}
             ],
-            "temperature": 0.3, "max_completion_tokens": 150,
+            "max_completion_tokens": 2000,
             "response_format": {"type": "json_object"}
         }
 
@@ -1184,7 +1184,7 @@ def test_gpt():
         "messages": [
             {"role": "user", "content": "Rispondi solo con json: {\"test\": \"ok\"}"}
         ],
-        "max_completion_tokens": 200,
+        "max_completion_tokens": 2000,
         "response_format": {"type": "json_object"}
     }
 
