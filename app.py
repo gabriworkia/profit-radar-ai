@@ -999,6 +999,7 @@ def call_gpt(data):
 
     try:
         import urllib.request
+        import urllib.error
 
         rv = float(data.get("rv", 0))
         adx = float(data.get("adx", 0))
@@ -1036,8 +1037,15 @@ Normalized Momentum: {nm}"""
             method="POST"
         )
 
-        with urllib.request.urlopen(req, timeout=10) as response:
-            result = json.loads(response.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(req, timeout=15) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as he:
+            error_body = he.read().decode("utf-8") if he.fp else ""
+            print(f"[GPT ERROR] HTTP {he.code}: {error_body[:500]}")
+            return {"signal": "HOLD", "confidence": 0,
+                    "reasoning": f"OpenAI HTTP {he.code}: {error_body[:200]}",
+                    "model": GPT_MODEL, "error": True}
 
         content = result["choices"][0]["message"]["content"]
         gpt_response = json.loads(content)
@@ -1130,6 +1138,53 @@ def diag():
         "total_predict": stats["total_predict_calls"],
         "total_feedback": stats["total_feedback_calls"],
     })
+
+
+@app.route("/test_gpt", methods=["GET"])
+def test_gpt():
+    """Testa la connessione OpenAI con il modello configurato e mostra l'errore esatto."""
+    import urllib.request, urllib.error
+
+    if not OPENAI_API_KEY:
+        return jsonify({"error": "OPENAI_API_KEY non configurata"})
+
+    payload = {
+        "model": GPT_MODEL,
+        "messages": [
+            {"role": "user", "content": "Rispondi solo: {\"test\": \"ok\"}"}
+        ],
+        "max_tokens": 20,
+        "response_format": {"type": "json_object"}
+    }
+
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {OPENAI_API_KEY}"},
+        method="POST"
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=15) as response:
+            result = json.loads(response.read().decode("utf-8"))
+        return jsonify({
+            "status": "ok",
+            "model": GPT_MODEL,
+            "response": result.get("choices", [{}])[0].get("message", {}).get("content", ""),
+            "model_used": result.get("model", ""),
+            "usage": result.get("usage", {}),
+        })
+    except urllib.error.HTTPError as he:
+        error_body = he.read().decode("utf-8") if he.fp else ""
+        return jsonify({
+            "status": "error",
+            "http_code": he.code,
+            "model": GPT_MODEL,
+            "openai_error": error_body[:1000],
+            "reason": "Il modello non esiste o la key non ha accesso"
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "model": GPT_MODEL, "exception": str(e)})
 
 
 # ============================================================
