@@ -1486,6 +1486,91 @@ def gpt_log():
         return jsonify({"log": f"Errore lettura log: {e}", "lines": 0})
 
 
+@app.route("/download/<filename>", methods=["GET"])
+def download_file(filename):
+    """Scarica un file dalla cartella data (ab_results.csv, requests_log.csv, gpt_api.log, feedback.csv)."""
+    allowed = ["ab_results.csv", "requests_log.csv", "gpt_api.log", "feedback.csv", "imported_tradelog.csv"]
+    if filename not in allowed:
+        return jsonify({"error": f"File non permesso. Usa uno di: {allowed}"}), 403
+    filepath = os.path.join(DATA_DIR, filename)
+    if not os.path.exists(filepath):
+        return jsonify({"error": f"File {filename} non trovato"}), 404
+    from flask import send_file
+    mime = "text/csv" if filename.endswith(".csv") else "text/plain"
+    return send_file(filepath, mimetype=mime, as_attachment=True, download_name=filename)
+
+
+@app.route("/save_to_github", methods=["POST"])
+def save_to_github():
+    """Salva i file di log su GitHub via API per persistenza."""
+    github_token = os.environ.get("GITHUB_TOKEN", "")
+    if not github_token:
+        return jsonify({"error": "GITHUB_TOKEN non configurata. Aggiungila come env var su Render."}), 200
+
+    repo = "gabriworkia/profit-radar-ai"
+    branch = "main"
+    import urllib.request, urllib.error, base64
+
+    files_to_save = ["ab_results.csv", "requests_log.csv", "gpt_api.log"]
+    results = []
+
+    for fname in files_to_save:
+        fpath = os.path.join(DATA_DIR, fname)
+        if not os.path.exists(fpath):
+            results.append({"file": fname, "status": "skipped", "reason": "non esiste"})
+            continue
+        try:
+            with open(fpath, "r", encoding="utf-8") as f:
+                content = f.read()
+            if not content or len(content) < 10:
+                results.append({"file": fname, "status": "skipped", "reason": "vuoto"})
+                continue
+
+            encoded = base64.b64encode(content.encode("utf-8")).decode("utf-8")
+
+            # Controlla se il file esiste già su GitHub per prendere lo SHA
+            api_url = f"https://api.github.com/repos/{repo}/contents/Data/{fname}"
+            sha = None
+            try:
+                req = urllib.request.Request(api_url, headers={
+                    "Authorization": f"token {github_token}",
+                    "User-Agent": "ProfitRadarAI"
+                })
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    existing = json.loads(resp.read().decode("utf-8"))
+                    sha = existing.get("sha")
+            except:
+                pass  # File non esiste ancora
+
+            # Upload
+            payload = {
+                "message": f"auto-save: {fname} ({len(content)} bytes)",
+                "content": encoded,
+                "branch": branch
+            }
+            if sha:
+                payload["sha"] = sha
+
+            req = urllib.request.Request(api_url, 
+                data=json.dumps(payload).encode("utf-8"),
+                headers={
+                    "Authorization": f"token {github_token}",
+                    "Content-Type": "application/json",
+                    "User-Agent": "ProfitRadarAI"
+                },
+                method="PUT"
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                resp_data = json.loads(resp.read().decode("utf-8"))
+
+            results.append({"file": fname, "status": "saved", "size": len(content)})
+            gpt_logger.info(f"💾 Salvato {fname} su GitHub ({len(content)} bytes)")
+        except Exception as e:
+            results.append({"file": fname, "status": "error", "reason": str(e)})
+
+    return jsonify({"results": results, "saved": sum(1 for r in results if r["status"] == "saved")})
+
+
 # ============================================================
 #  RIPRISTINO LOG DA GITHUB (post-deploy)
 # ============================================================
