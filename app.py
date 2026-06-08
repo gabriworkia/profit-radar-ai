@@ -10,12 +10,30 @@ Repo: https://github.com/gabriworkia/profit-radar-ai
 import os
 import json
 import time
+import logging
 import traceback
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
+
+# ============================================================
+#  LOGGING OPENAI API
+# ============================================================
+LOG_PATH = os.path.join(os.environ.get("DATA_DIR", "data"), "gpt_api.log")
+os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.FileHandler(LOG_PATH, encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+gpt_logger = logging.getLogger("gpt_api")
 
 # ============================================================
 #  CONFIGURAZIONE
@@ -997,6 +1015,11 @@ def call_gpt(data):
     if not OPENAI_API_KEY:
         return {"signal": "HOLD", "confidence": 0, "reasoning": "API key non configurata", "error": True}
 
+    symbol = data.get("symbol", "")
+    direction = data.get("direction", "BUY")
+    module = data.get("module", "STD")
+    gpt_logger.info(f"📤 RICHIESTA GPT | {symbol} {direction} ({module})")
+
     try:
         import urllib.request
         import urllib.error
@@ -1042,22 +1065,30 @@ Normalized Momentum: {nm}"""
                 result = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as he:
             error_body = he.read().decode("utf-8") if he.fp else ""
-            print(f"[GPT ERROR] HTTP {he.code}: {error_body[:500]}")
+            gpt_logger.error(f"❌ ERRORE HTTP {he.code} | {symbol} | {error_body[:300]}")
             return {"signal": "HOLD", "confidence": 0,
                     "reasoning": f"OpenAI HTTP {he.code}: {error_body[:200]}",
                     "model": GPT_MODEL, "error": True}
 
         content = result["choices"][0]["message"]["content"]
         gpt_response = json.loads(content)
+        usage = result.get("usage", {})
+        total_tokens = usage.get("total_tokens", 0)
+
+        signal_out = gpt_response.get("signal", "HOLD").upper()
+        confidence_out = min(100, max(0, int(gpt_response.get("confidence", 0))))
+        reasoning_out = gpt_response.get("reasoning", "")
+
+        gpt_logger.info(f"📥 RISPOSTA GPT | {symbol} → {signal_out} {confidence_out}% | 💰 Tokens: {total_tokens} | {reasoning_out[:80]}")
 
         return {
-            "signal": gpt_response.get("signal", "HOLD").upper(),
-            "confidence": min(100, max(0, int(gpt_response.get("confidence", 0)))),
-            "reasoning": gpt_response.get("reasoning", ""),
+            "signal": signal_out,
+            "confidence": confidence_out,
+            "reasoning": reasoning_out,
             "model": GPT_MODEL, "error": False
         }
     except Exception as e:
-        print(f"[GPT ERROR] {e}")
+        gpt_logger.error(f"❌ ERRORE GPT | {symbol} | {str(e)}")
         traceback.print_exc()
         return {"signal": "HOLD", "confidence": 0, "reasoning": str(e), "error": True}
 
@@ -1438,6 +1469,21 @@ def export_logs():
             result["requests_log"] = {"exists": True, "rows": -1, "error": "read failed"}
     result["hint"] = "Per salvare su GitHub: copia i file da Data/ nel repo. Il restore è automatico al prossimo deploy."
     return jsonify(result)
+
+
+@app.route("/gpt_log", methods=["GET"])
+def gpt_log():
+    """Mostra le ultime righe del log GPT."""
+    lines_count = int(request.args.get("lines", 50))
+    if not os.path.exists(LOG_PATH):
+        return jsonify({"log": "Nessun log GPT ancora", "lines": 0})
+    try:
+        with open(LOG_PATH, "r", encoding="utf-8") as f:
+            all_lines = f.readlines()
+        last_lines = all_lines[-lines_count:]
+        return jsonify({"log": "".join(last_lines), "lines": len(last_lines), "total": len(all_lines)})
+    except Exception as e:
+        return jsonify({"log": f"Errore lettura log: {e}", "lines": 0})
 
 
 # ============================================================
