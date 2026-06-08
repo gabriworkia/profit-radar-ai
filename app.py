@@ -197,16 +197,32 @@ def rules_based_score(data):
     return direction, score, {"base": 50, "final": score, "method": "rules_v1"}
 
 
+TRAIN_FEATURES = None  # Salvate al momento del training
+
 # ============================================================
 #  PREDICT CON MODELLO
 # ============================================================
 def predict_with_model(features_df):
-    global model
+    global model, TRAIN_FEATURES
     if model is None:
         return None, 0
     try:
-        available = [f for f in feature_names if f in features_df.columns]
-        proba = model.predict_proba(features_df[available])
+        # Aggiungi features derivate se mancanti
+        if "rv_abs" not in features_df.columns and "rv" in features_df.columns:
+            features_df["rv_abs"] = features_df["rv"].abs()
+        if "adr_residual_pct" not in features_df.columns and "adr_pct" in features_df.columns:
+            features_df["adr_residual_pct"] = (100 - features_df["adr_pct"]).clip(lower=0)
+        
+        # Usa le features con cui il modello è stato addestrato
+        if TRAIN_FEATURES is not None:
+            cols = [f for f in TRAIN_FEATURES if f in features_df.columns]
+        else:
+            cols = [f for f in feature_names if f in features_df.columns]
+        
+        if not cols:
+            return None, 0
+        
+        proba = model.predict_proba(features_df[cols])
         confidence = int(proba[0][1] * 100)
         signal = "BUY" if proba[0][1] >= 0.5 else "SELL"
         return signal, confidence
@@ -275,13 +291,19 @@ def log_feedback(fb_data):
 #  LOAD / TRAIN MODEL
 # ============================================================
 def load_model():
-    global model, stats
+    global model, stats, TRAIN_FEATURES
     if os.path.exists(MODEL_PATH):
         try:
             import joblib
             model = joblib.load(MODEL_PATH)
             stats["model_loaded"] = True
             stats["model_is_trained"] = True
+            # Carica le features salvate
+            feat_path = MODEL_PATH.replace(".pkl", "_features.json")
+            if os.path.exists(feat_path):
+                with open(feat_path, "r") as f:
+                    TRAIN_FEATURES = json.load(f)
+                print(f"[MODEL] Features caricate: {TRAIN_FEATURES}")
             print(f"[MODEL] Caricato da {MODEL_PATH}")
             return True
         except Exception as e:
@@ -298,7 +320,7 @@ def load_model():
 
 
 def train_model():
-    global model, stats
+    global model, stats, TRAIN_FEATURES
 
     if not os.path.exists(FEEDBACK_PATH):
         return {"error": "Nessun dato feedback disponibile"}
@@ -355,9 +377,15 @@ def train_model():
                           valid_sets=[train_data], callbacks=[lgb.log_evaluation(0)])
 
         joblib.dump(model, MODEL_PATH)
+        TRAIN_FEATURES = list(feature_cols)  # Salva per predict
+        # Salva features su disco per sopravvivere ai restart
+        feat_path = MODEL_PATH.replace(".pkl", "_features.json")
+        with open(feat_path, "w") as f:
+            json.dump(TRAIN_FEATURES, f)
         importance = dict(zip(feature_cols, model.feature_importance().tolist()))
 
         stats["model_is_trained"] = True
+        stats["model_loaded"] = True
         stats["model_version"] += 1
         stats["last_retrain_time"] = datetime.now(timezone.utc).isoformat()
 
