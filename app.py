@@ -298,6 +298,7 @@ def log_request(data, result):
 def log_feedback(fb_data):
     ensure_data_dir()
     try:
+        ctx = fb_data.get("context", {}) or {}
         row = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "ticket": fb_data.get("ticket", 0),
@@ -311,6 +312,7 @@ def log_feedback(fb_data):
             "won": fb_data.get("won", False),
             "ai_confidence": fb_data.get("ai_confidence", 0),
             "ai_signal": fb_data.get("ai_signal", ""),
+            # --- Core market features ---
             "rv": fb_data.get("rv", 0),
             "adx": fb_data.get("adx", 0),
             "adr_pct": fb_data.get("adr_pct", 0),
@@ -318,10 +320,49 @@ def log_feedback(fb_data):
             "nm": fb_data.get("nm", 0),
             "nm_accel": fb_data.get("nm_accel", 0),
             "nm_dist": fb_data.get("nm_dist", 0),
-            "is_compressing": fb_data.get("is_compressing", False),
+            "is_compressing": 1 if fb_data.get("is_compressing", False) else 0,
+            # --- Extended features (added 2026-06) ---
+            "adr_pip": fb_data.get("adr_pip", 0),
+            "adr_media": fb_data.get("adr_media", 0),
+            "ema_pos": fb_data.get("ema_pos", 0),
+            "ema_gap_pct": fb_data.get("ema_gap_pct", 0),
+            "rv_prev": fb_data.get("rv_prev", 0),
+            "rv_prev2": fb_data.get("rv_prev2", 0),
+            "light_streak": fb_data.get("light_streak", 0),
+            "was_gray": 1 if fb_data.get("was_gray", False) else 0,
+            "hist_flip_bar": fb_data.get("hist_flip_bar", 999),
+            "nm_signal": fb_data.get("nm_signal", 0),
+            # --- Context object (state of all 28 pairs) ---
+            "ctx_total": ctx.get("total", 0),
+            "ctx_non_gray": ctx.get("non_gray", 0),
+            "ctx_green": ctx.get("green", 0),
+            "ctx_red": ctx.get("red", 0),
+            "ctx_avg_abs_rv": ctx.get("avg_abs_rv", 0),
+            "ctx_extreme_rv": ctx.get("extreme_rv", 0),
+            # --- Histogram sequence features ---
+            "hist_consec_color": fb_data.get("hist_consec_color", 0),
+            "hist_bars_since_gray": fb_data.get("hist_bars_since_gray", 0),
+            "hist_cycle_count": fb_data.get("hist_cycle_count", 0),
+            "hist_crossed_zero": fb_data.get("hist_crossed_zero", 0),
+            "hist_bar_slope": fb_data.get("hist_bar_slope", 0),
+            "hist_pullback_depth": fb_data.get("hist_pullback_depth", 0),
+            "hist_seq_encoded": fb_data.get("hist_seq_encoded", 0),
+            "hist_bar_ratio": fb_data.get("hist_bar_ratio", 1),
         }
-        pd.DataFrame([row]).to_csv(FEEDBACK_PATH, mode='a',
-            header=not os.path.exists(FEEDBACK_PATH), index=False)
+        # Append in modo robusto: se il CSV esiste con uno schema diverso,
+        # uniamo le colonne cosi' i vecchi trade (senza feature nuove) restano
+        # con valori vuoti senza rompere il file.
+        new_df = pd.DataFrame([row])
+        if os.path.exists(FEEDBACK_PATH):
+            try:
+                old_df = pd.read_csv(FEEDBACK_PATH)
+                combined = pd.concat([old_df, new_df], ignore_index=True, sort=False)
+                combined.to_csv(FEEDBACK_PATH, index=False)
+            except Exception:
+                # Fallback: append semplice
+                new_df.to_csv(FEEDBACK_PATH, mode='a', header=False, index=False)
+        else:
+            new_df.to_csv(FEEDBACK_PATH, index=False)
     except Exception as e:
         print(f"[FEEDBACK ERROR] {e}")
 
@@ -374,22 +415,61 @@ def train_model():
 
         df = fb_df.copy()
 
-        # Feature engineering
-        df["rv_abs"] = df["rv"].astype(float).abs()
-        df["adr_residual_pct"] = 100 - df["adr_pct"].astype(float)
-
-        feature_cols = ["rv", "adx", "adr_pct", "rv_abs", "adr_residual_pct"]
-
-        # Optional features
-        for feat in ["nm", "nm_accel", "nm_dist", "is_compressing"]:
-            if feat in df.columns:
-                df[feat] = df[feat].fillna(0)
-                feature_cols.append(feat)
-
+        # --- Numeric coercion delle colonne base ---
         df["rv"] = pd.to_numeric(df["rv"], errors="coerce").fillna(0)
         df["adx"] = pd.to_numeric(df["adx"], errors="coerce").fillna(0)
         df["adr_pct"] = pd.to_numeric(df["adr_pct"], errors="coerce").fillna(0)
+
+        # --- Feature engineering derivate ---
+        df["rv_abs"] = df["rv"].abs()
+        df["adr_residual_pct"] = (100 - df["adr_pct"]).clip(lower=0)
+
+        # rv_decel: decelerazione del radar value (|rv_prev| - |rv|).
+        # Coerente con il calcolo in /predict. Se manca rv_prev resta 0.
+        if "rv_prev" in df.columns:
+            rv_prev_num = pd.to_numeric(df["rv_prev"], errors="coerce").fillna(0)
+            df["rv_decel"] = rv_prev_num.abs() - df["rv"].abs()
+        else:
+            df["rv_decel"] = 0.0
+
+        # Set base sempre presente
+        feature_cols = ["rv", "adx", "adr_pct", "rv_abs", "adr_residual_pct", "rv_decel"]
+
+        # --- Feature opzionali: aggiunte automaticamente se presenti nel CSV ---
+        # Ogni feature qui sotto, se la colonna esiste, viene resa numerica,
+        # i valori mancanti riempiti a 0, e aggiunta al set di training.
+        # I vecchi trade (senza queste colonne) avranno valore 0 => il modello
+        # impara "feature=0 => meno informazione => piu' cautela".
+        OPTIONAL_FEATURES = [
+            # Neural momentum
+            "nm", "nm_accel", "nm_dist", "nm_signal", "is_compressing",
+            # ADR / EMA estese
+            "adr_pip", "adr_media", "ema_pos", "ema_gap_pct",
+            # Sequenza radar value
+            "rv_prev", "rv_prev2", "light_streak", "was_gray", "hist_flip_bar",
+            # Context (stato delle 28 coppie)
+            "ctx_total", "ctx_non_gray", "ctx_green", "ctx_red",
+            "ctx_avg_abs_rv", "ctx_extreme_rv",
+            # Histogram sequence features
+            "hist_consec_color", "hist_bars_since_gray", "hist_cycle_count",
+            "hist_crossed_zero", "hist_bar_slope", "hist_pullback_depth",
+            "hist_seq_encoded", "hist_bar_ratio",
+        ]
+        for feat in OPTIONAL_FEATURES:
+            if feat in df.columns:
+                # bool/stringhe ("True"/"False") -> numerico
+                df[feat] = (
+                    df[feat]
+                    .replace({True: 1, False: 0, "True": 1, "False": 0,
+                              "true": 1, "false": 0})
+                )
+                df[feat] = pd.to_numeric(df[feat], errors="coerce").fillna(0)
+                # Scarta feature costanti (zero varianza) => inutili e rumorose
+                if df[feat].nunique() > 1:
+                    feature_cols.append(feat)
+
         df["won"] = df["won"].astype(bool)
+        print(f"[TRAIN] Feature usate ({len(feature_cols)}): {feature_cols}")
         # Usa TUTTI i trade, anche quelli con features=0
         # Il modello impara che "no features = meno info = più cautela"
 
