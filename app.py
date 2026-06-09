@@ -277,6 +277,17 @@ def log_request(data, result):
             "ai_signal": result.get("signal", ""),
             "ai_confidence": result.get("confidence", 0),
             "method": result.get("method", ""),
+            "lgbm_signal": result.get("lgbm_signal", ""),
+            "lgbm_conf": result.get("lgbm_conf", 0),
+            "hybrid_reasoning": result.get("hybrid_reasoning", ""),
+            "hist_consec_color": data.get("hist_consec_color", 0),
+            "hist_bars_since_gray": data.get("hist_bars_since_gray", 0),
+            "hist_cycle_count": data.get("hist_cycle_count", 0),
+            "hist_crossed_zero": data.get("hist_crossed_zero", 0),
+            "hist_bar_slope": data.get("hist_bar_slope", 0),
+            "hist_pullback_depth": data.get("hist_pullback_depth", 0),
+            "hist_seq_encoded": data.get("hist_seq_encoded", 0),
+            "hist_bar_ratio": data.get("hist_bar_ratio", 0),
         }
         pd.DataFrame([row]).to_csv(REQUESTS_PATH, mode='a',
             header=not os.path.exists(REQUESTS_PATH), index=False)
@@ -511,6 +522,15 @@ def predict():
             "nm_accel": float(data.get("nm_accel", 0)),
             "nm_dist": float(data.get("nm_dist", 0)),
             "is_compressing": 1 if data.get("is_compressing", False) else 0,
+            # Histogram sequence features
+            "hist_consec_color": int(data.get("hist_consec_color", 0)),
+            "hist_bars_since_gray": int(data.get("hist_bars_since_gray", 0)),
+            "hist_cycle_count": int(data.get("hist_cycle_count", 0)),
+            "hist_crossed_zero": int(data.get("hist_crossed_zero", 0)),
+            "hist_bar_slope": float(data.get("hist_bar_slope", 0)),
+            "hist_pullback_depth": float(data.get("hist_pullback_depth", 0)),
+            "hist_seq_encoded": int(data.get("hist_seq_encoded", 0)),
+            "hist_bar_ratio": float(data.get("hist_bar_ratio", 1)),
         }
 
         # === STEP 1: Prova LightGBM ===
@@ -1078,6 +1098,15 @@ Indicatori chiave:
 - Histogram: GREEN_LIGHT=rialzo forte, RED_LIGHT=ribasso forte, GRAY=neutrale
 - Normalized Momentum: positivo=rialzista, negativo=ribassista
 
+Feature avanzate istogramma:
+- hist_consec_color: candele consecutive stesso colore (1-3=fresco, 4-8=in corso, 9+=maturo)
+- hist_bars_since_gray: candele dall'ultimo GRAY (meno=segnale fresco)
+- hist_cycle_count: cicli verde-rosso completati oggi (piu cicoli = movimento frammentato)
+- hist_crossed_zero: 1 se l'istogramma ha attraversato lo zero di recente (inversione)
+- hist_bar_slope: tendenza altezza barre (positivo=crescente=accelerazione, negativo=decelerazione)
+- hist_pullback_depth: profondità ultimo pullback (0=minimo, 100=molto profondo)
+- hist_bar_ratio: barra attuale vs media storica (>1.5=accelerazione forte, <0.5=indebolimento)
+
 REGOLE:
 - Se i dati sono insufficienti o ambigui, dai confidenza bassa (<50)
 - Non avere paura di dire HOLD se il trade non e' chiaro
@@ -1107,6 +1136,14 @@ def call_gpt(data):
         symbol = data.get("symbol", "")
         nm = float(data.get("nm", 0))
 
+        hist_consec = int(data.get("hist_consec_color", 0))
+        hist_since_gray = int(data.get("hist_bars_since_gray", 0))
+        hist_cycles = int(data.get("hist_cycle_count", 0))
+        hist_zero = int(data.get("hist_crossed_zero", 0))
+        hist_slope = float(data.get("hist_bar_slope", 0))
+        hist_pullback = float(data.get("hist_pullback_depth", 0))
+        hist_bar_ratio = float(data.get("hist_bar_ratio", 1))
+
         user_msg = f"""Valuta questo trade:
 Simbolo: {symbol}
 Direzione proposta: {direction}
@@ -1115,7 +1152,14 @@ Radar Value: {rv}
 ADX(14): {adx}
 ADR%: {adr_pct}%
 Histogram: {hist}
-Normalized Momentum: {nm}"""
+Normalized Momentum: {nm}
+Barre consecutive: {hist_consec}
+Candele da ultimo GRAY: {hist_since_gray}
+Cicli oggi: {hist_cycles}
+Attraversato zero: {"SI" if hist_zero else "NO"}
+Slope barre: {hist_slope:.4f}
+Pullback depth: {hist_pullback:.1f}%
+Barra/Media ratio: {hist_bar_ratio:.2f}"""
 
         payload = {
             "model": GPT_MODEL,
@@ -1563,7 +1607,7 @@ def gpt_log():
 @app.route("/download/<filename>", methods=["GET"])
 def download_file(filename):
     """Scarica un file dalla cartella data (ab_results.csv, requests_log.csv, gpt_api.log, feedback.csv)."""
-    allowed = ["ab_results.csv", "requests_log.csv", "gpt_api.log", "feedback.csv", "imported_tradelog.csv"]
+    allowed = ["ab_results.csv", "requests_log.csv", "gpt_api.log", "feedback.csv", "imported_tradelog.csv", "PRP_TradeLog.csv"]
     if filename not in allowed:
         return jsonify({"error": f"File non permesso. Usa uno di: {allowed}"}), 403
     filepath = os.path.join(DATA_DIR, filename)
