@@ -467,6 +467,13 @@ def get_stats():
 
 @app.route("/predict", methods=["POST"])
 def predict():
+    """
+    Sistema ibrido LightGBM + GPT:
+    - Se LightGBM confidence >= 60% → usa LightGBM
+    - Se LightGBM < 60% ma GPT confidence >= 60% → usa GPT
+    - Se entrambi < 50% → HOLD (confidence 0)
+    - Se uno è 50-59% e l'altro < 50% → HOLD
+    """
     try:
         data = request.get_json(force=True)
         if not data:
@@ -506,28 +513,95 @@ def predict():
             "is_compressing": 1 if data.get("is_compressing", False) else 0,
         }
 
-        signal, confidence, method = direction, 0, "rules_v1"
+        # === STEP 1: Prova LightGBM ===
+        lgbm_signal, lgbm_conf = direction, 0
+        lgbm_method = "rules_v1"
 
         if stats["model_is_trained"] and model is not None:
             try:
                 features_df = pd.DataFrame([features_row])
                 ml_signal, ml_conf = predict_with_model(features_df)
                 if ml_conf > 0:
-                    signal, confidence, method = ml_signal, ml_conf, f"lgbm_v{stats['model_version']}"
+                    lgbm_signal, lgbm_conf = ml_signal, ml_conf
+                    lgbm_method = f"lgbm_v{stats['model_version']}"
             except: pass
 
-        if confidence == 0:
-            signal, confidence, details = rules_based_score(data)
-            method = "rules_v1"
+        if lgbm_conf == 0:
+            lgbm_signal, lgbm_conf, _ = rules_based_score(data)
+            lgbm_method = "rules_v1"
+
+        # === STEP 2: Decisione ibrida ===
+        LGBM_THRESHOLD = 60  # Soglia per usare direttamente LightGBM
+        GPT_THRESHOLD = 60   # Soglia per usare GPT come fallback
+        HOLD_THRESHOLD = 50  # Sotto questa soglia da entrambi → HOLD
+
+        hybrid_reasoning = ""
+        used_gpt = False
+
+        if lgbm_conf >= LGBM_THRESHOLD:
+            # LightGBM è abbastanza confidente → usa lui
+            signal, confidence, method = lgbm_signal, lgbm_conf, lgbm_method
+            hybrid_reasoning = f"LightGBM {lgbm_conf}% >= {LGBM_THRESHOLD}% → uso LightGBM"
+        else:
+            # LightGBM non è confidente → prova GPT
+            gpt_result = call_gpt(data)
+            gpt_signal = gpt_result.get("signal", "HOLD").upper()
+            gpt_conf = gpt_result.get("confidence", 0)
+            gpt_error = gpt_result.get("error", False)
+
+            if not gpt_error and gpt_conf >= GPT_THRESHOLD and gpt_signal in ("BUY", "SELL"):
+                # GPT è confidente → usa GPT
+                signal = gpt_signal
+                confidence = gpt_conf
+                method = "gpt_hybrid"
+                used_gpt = True
+                hybrid_reasoning = f"LightGBM {lgbm_conf}% < {LGBM_THRESHOLD}% → GPT {gpt_signal} {gpt_conf}% >= {GPT_THRESHOLD}% → uso GPT"
+            elif lgbm_conf >= HOLD_THRESHOLD and not gpt_error and gpt_conf < HOLD_THRESHOLD:
+                # LightGBM ha 50-59%, GPT sotto 50% → usiamo LightGBM ma con cautela
+                signal, confidence, method = lgbm_signal, lgbm_conf, lgbm_method
+                hybrid_reasoning = f"LightGBM {lgbm_conf}% (50-59%) + GPT {gpt_conf}% < 50% → uso LightGBM con cautela"
+            elif not gpt_error and gpt_conf >= HOLD_THRESHOLD and gpt_signal in ("BUY", "SELL"):
+                # GPT 50-59% ma non >= 60%, e LightGBM < 50% → HOLD
+                signal, confidence, method = "HOLD", 0, "hybrid_hold"
+                hybrid_reasoning = f"LightGBM {lgbm_conf}% < 50% + GPT {gpt_conf}% (50-59%) → HOLD"
+            else:
+                # Entrambi < 50% → HOLD
+                signal, confidence, method = "HOLD", 0, "hybrid_hold"
+                if gpt_error:
+                    hybrid_reasoning = f"LightGBM {lgbm_conf}% < {LGBM_THRESHOLD}% + GPT ERRORE → HOLD"
+                else:
+                    hybrid_reasoning = f"LightGBM {lgbm_conf}% < {LGBM_THRESHOLD}% + GPT {gpt_conf}% < {GPT_THRESHOLD}% → HOLD"
+
+            # Log A/B per tracciamento
+            ensure_data_dir()
+            ab_row = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "symbol": data.get("symbol", ""),
+                "direction": data.get("direction", ""),
+                "module": data.get("module", ""),
+                "rv": data.get("rv", 0), "adx": data.get("adx", 0),
+                "adr_pct": data.get("adr_pct", 0), "hist": data.get("hist", ""),
+                "lgbm_signal": lgbm_signal,
+                "lgbm_conf": lgbm_conf,
+                "gpt_signal": gpt_signal,
+                "gpt_conf": gpt_conf,
+                "gpt_reasoning": gpt_result.get("reasoning", ""),
+                "agreement": "SAME" if lgbm_signal.upper() == gpt_signal.upper() else "DIFF",
+            }
+            pd.DataFrame([ab_row]).to_csv(AB_RESULTS_PATH, mode="a",
+                header=not os.path.exists(AB_RESULTS_PATH), index=False)
 
         result = {
             "signal": signal, "confidence": confidence, "method": method,
             "symbol": data.get("symbol", ""),
             "direction_proposed": direction,
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "lgbm_signal": lgbm_signal, "lgbm_conf": lgbm_conf,
+            "hybrid_reasoning": hybrid_reasoning,
         }
 
         log_request(data, result)
+        print(f"[HYBRID] {data.get('symbol','')} | LGBM: {lgbm_signal} {lgbm_conf}% | Final: {signal} {confidence}% via {method} | {hybrid_reasoning}")
         return jsonify(result)
 
     except Exception as e:
@@ -823,9 +897,9 @@ def train_from_github():
 # ============================================================
 
 DEFAULT_EA_CONFIG = {
-    "aggressiveness": 2,
+    "aggressiveness": 3,
     "use_ai": True,
-    "ai_min_conf": 70,
+    "ai_min_conf": 55,
     "max_consec_loss": 2,
     "max_daily_loss": 3,
     "max_daily_profit": 3.0,
