@@ -1,0 +1,4313 @@
+//+------------------------------------------------------------------+
+//|                                          ProfitRadarPro_EA.mq4    |
+//|                           Profit Radar Pro v2.7 - Intraday M15 EA  |
+//|                           Platform: MetaTrader 4 ECN               |
+//+------------------------------------------------------------------+
+#property copyright "Profit Radar Pro v2.7"
+#property link      ""
+#property version   "3.00"
+#property strict
+#property description "EA intraday M15 - Profit Radar Pro v3.0"
+#property description "Lotto fisso 0.01 | Trading 24/5 Lun-Ven"
+#property description "3 moduli: Standard + Breakout + Reversal"
+#property description "CSV 9 campi | Validazione dati | Fallback automatico"
+
+//+------------------------------------------------------------------+
+// |  INPUT PARAMETERS                                                 |
+//+------------------------------------------------------------------+
+
+//=== PRESET AGGRESSIVITA' ============================================
+extern string _s0_              = "=== AGGRESSIVITA' & TEST ===";
+extern int    InpAggressiveness = 2;              // 1=Conservativo 2=Moderato 3=Aggressivo
+extern bool   InpTestTrade      = false;
+
+//=== FILE & TIMING ===================================================
+extern string _s1_              = "=== FILE & TIMING ===";
+extern int    InpDataMode      = 1;              // 0=CSV 1=Auto 2=CSV forzato
+extern string InpCSVFile        = "AI_M15_LIGHT.csv";
+extern int    InpCSVMaxAgeSec   = 0;
+extern string InpRadarIndicator = "THE_PROFIT_RADAR_PRO_by_ULTIMA_MARKETS_v2_7";
+extern bool   InpExportCSV      = true;
+extern bool   InpAutoFallback   = true;
+extern int    InpFallbackAfter  = 1;
+extern bool   InpShowExportBtn  = true;
+extern bool   InpAutoExport     = true;
+extern bool   InpStrategyTest   = false;
+
+//=== RISK MANAGEMENT =================================================
+extern string _s2_              = "=== RISK MANAGEMENT ===";
+extern double InpFixedLots      = 0.01;           // Lotto fisso
+extern int    InpMaxConcurrent  = 10;             // Max trade aperti contemporanei
+extern int    InpMaxPerPair     = 1;              // Max 1 trade per cross
+extern int    InpMaxConsecLoss  = 2;              // Stop dopo N loss consecutivi
+extern int    InpMaxDailyLoss   = 3;              // Stop dopo N loss giornalieri
+extern double InpMaxDailyProfit = 3.0;            // Stop dopo +N% profitto giornaliero
+
+//=== TRADE PARAMETERS ================================================
+extern string _s3_              = "=== TRADE PARAMS ===";
+extern int    InpBEPips         = 15;             // Pip per attivare Break-Even
+extern int    InpBEProfit       = 5;              // Pip di profitto al BE
+extern double InpTrailActivate  = 0.8;            // Attiva trailing a 0.8R
+extern double InpTrailATRMult   = 0.2;            // Trailing = EMA21 - ATR*0.2
+extern double InpMinRR          = 1.5;            // Risk:Reward minimo
+extern double InpTPPercent      = 75.0;           // TP = ADR residui * 75%
+extern int    InpMagicNumber    = 270101;
+extern int    InpMaxSlippage    = 3;
+extern int    InpMaxSpread      = 30;             // Max spread in pip
+extern double InpATR_Mult       = 1.2;            // SL = ATR * 1.2
+extern int    InpATR_Period     = 14;
+extern int    InpFractalBars    = 50;             // Bar per ricerca fractal SL
+
+//=== STANDARD FILTERS ================================================
+extern string _s4_              = "=== STANDARD FILTERS ===";
+extern int    InpRV_Max         = 30;             // Radar Value massimo
+extern double InpADR_Max        = 60.0;           // ADR% massimo
+
+//=== RX FILTER =======================================================
+extern string _s4b_             = "=== RX FILTER ===";
+extern bool   InpRXRequired     = false;
+extern int    InpRXMaxAge       = 4;
+extern bool   InpRXBonusScore   = true;
+
+//=== BREAKOUT (GRAY -> LIGHT) ========================================
+extern string _s5_              = "=== BREAKOUT (GRAY->LIGHT) ===";
+extern bool   InpBreakoutOn     = true;
+extern int    InpBreakoutMinLIGHT = 2;
+extern double InpBreakoutEMAGapPct = 0.20;
+extern int    InpBreakoutMaxRV   = 15;
+extern double InpBreakoutMaxADX  = 25;
+extern double InpBreakoutMaxADR  = 50;
+extern double InpBreakoutMinRR   = 1.8;
+extern bool   InpBreakoutReqRX   = false;
+extern int    InpBreakoutMaxRXAge = 2;
+extern bool   InpBreakoutATRExp  = true;
+extern bool   InpBreakoutPriceEMA = true;
+extern double InpBreakoutMinBody = 0.30;
+extern int    InpBreakoutScoreBonus = -80;
+
+//=== REVERSAL (TREND MATURO) =========================================
+extern string _s6_              = "=== REVERSAL (MATURO) ===";
+extern bool   InpReversalOn     = false;          // Disattivato di default
+extern int    InpReversalRV     = 65;
+extern double InpReversalADR    = 100.0;
+extern bool   InpRevReqDecel    = true;
+extern int    InpRevMinDecel    = 5;
+extern bool   InpRevReqRX       = false;
+extern bool   InpRevRXBonus     = true;
+extern bool   InpRevReqDiverg   = true;
+extern int    InpRevDivergBars  = 8;
+extern bool   InpRevReqHistFlip = true;
+extern int    InpRevMaxHistAge  = 3;
+
+//=== SESSIONE ========================================================
+extern string _s7_              = "=== SESSIONE ===";
+extern int    InpTimeOffset     = -1;             // Fuso orario Italia (broker server offset)
+extern int    InpSundayStartH   = 23;             // Domenica: inizio trading (ora Italia, 23=non attivo)
+extern int    InpFriCloseProfitH = 20;            // Venerdi: chiudi profitto alle 20:00 Italia
+extern int    InpFriCloseProfitM = 0;
+extern int    InpFriCloseLossH   = 22;            // Venerdi: chiudi perdita alle 22:00 Italia
+extern int    InpFriCloseLossM   = 0;
+extern int    InpFriForceCloseH  = 22;            // Venerdi: FORCE CLOSE alle 22:30 Italia
+extern int    InpFriForceCloseM  = 30;
+
+//=== AI MODULE =======================================================
+extern string _s7b_            = "=== AI MODULE ===";
+extern bool   InpUseAI         = true;            // AI OBBLIGATORIA attiva
+extern string InpAIUrl         = "https://profit-radar-ai.onrender.com/predict";
+extern int    InpAIMinConf     = 70;              // Confidenza minima %
+extern int    InpAITimeout     = 5000;            // Timeout WebRequest ms
+extern bool   InpAILog         = true;            // Log dettagliato AI
+
+//=== DASHBOARD =======================================================
+extern string _s8_              = "=== DASHBOARD ===";
+extern int    InpDashX         = 1300;
+extern int    InpDashY         = 30;
+extern int    InpDashFontSize  = 9;
+extern color  InpDashColor     = clrWhite;
+extern color  InpDashBgColor   = C'20,20,40';
+extern bool   InpDashBg        = true;
+
+//+------------------------------------------------------------------+
+// |  CONSTANTS                                                        |
+//+------------------------------------------------------------------+
+#define MAX_PAIRS    28
+#define VERSION_STR  "3.0"
+
+#define RT_LONG      1
+#define RT_SHORT     2
+#define RT_RISE      3
+#define RT_FALL      4
+#define RT_UNKNOWN   0
+
+#define HS_GREEN_LIGHT  1
+#define HS_GREEN_DARK   2
+#define HS_RED_LIGHT    3
+#define HS_RED_DARK     4
+#define HS_GRAY         5
+#define HS_UNKNOWN      0
+
+#define RX_NONE     0
+#define RX_NEW_H    1
+#define RX_NEW_L    2
+
+#define ORIGIN_STD      0
+#define ORIGIN_BREAKOUT 1
+#define ORIGIN_REVERSAL 2
+
+string PAIRS[28] = {
+   "EURUSD+","GBPUSD+","USDCHF+","USDCAD+",
+   "AUDUSD+","NZDUSD+","USDJPY+","EURJPY+",
+   "GBPJPY+","EURGBP+","AUDCAD+","AUDCHF+",
+   "AUDNZD+","AUDJPY+","CADCHF+","CADJPY+",
+   "CHFJPY+","EURCHF+","EURCAD+","EURAUD+",
+   "EURNZD+","GBPAUD+","GBPCAD+","GBPCHF+",
+   "GBPNZD+","NZDCAD+","NZDCHF+","NZDJPY+"
+};
+
+//+------------------------------------------------------------------+
+// |  GLOBAL DATA ARRAYS                                               |
+//+------------------------------------------------------------------+
+string   g_symbol[MAX_PAIRS];
+double   g_close[MAX_PAIRS];
+double   g_ema21[MAX_PAIRS];
+double   g_ema200[MAX_PAIRS];
+int      g_emaPosition[MAX_PAIRS];
+double   g_adx[MAX_PAIRS];
+double   g_radarValue[MAX_PAIRS];
+int      g_radarType[MAX_PAIRS];
+int      g_histogramState[MAX_PAIRS];
+double   g_pipFatti[MAX_PAIRS];
+double   g_media10gg[MAX_PAIRS];
+double   g_adrPercent[MAX_PAIRS];
+int      g_rxType[MAX_PAIRS];
+int      g_rxAge[MAX_PAIRS];
+bool     g_rxPresent[MAX_PAIRS];
+bool     g_valid[MAX_PAIRS];
+int      g_score[MAX_PAIRS];
+int      g_origin[MAX_PAIRS];
+int      g_dataCount = 0;
+
+//--- Momentum metrics (Normalized Momentum System)
+double   g_normMomentum[MAX_PAIRS];     // NM = (EMA8-EMA21) / ATR14
+double   g_momentumSignal[MAX_PAIRS];   // Signal = EMA(NM,5)
+double   g_momentumAccel[MAX_PAIRS];    // Acceleration = NM - NM[1]
+double   g_momentumDist[MAX_PAIRS];     // Distance = abs(NM - Signal)
+bool     g_isCompressing[MAX_PAIRS];    // Compression flag
+
+int      g_prevHistogram[MAX_PAIRS];
+int      g_lightStreak[MAX_PAIRS];
+bool     g_prevWasGray[MAX_PAIRS];
+bool     g_histogramTracked = false;
+
+//--- Histogram sequence features (ultime 8 candele)
+int      g_histConsecColor[MAX_PAIRS];       // candele consecutive stesso colore (verde o rosso)
+int      g_histBarsSinceGray[MAX_PAIRS];     // candele dall'ultimo GRAY
+int      g_histCycleCount[MAX_PAIRS];        // quanti cicli completi (verde->grigio->rosso->grigio) oggi
+bool     g_histCrossedZero[MAX_PAIRS];       // ha attraversato lo zero nelle ultime 10 candele
+double   g_histBarSlope[MAX_PAIRS];          // slope altezza barre (positivo=crescente)
+double   g_histPullbackDepth[MAX_PAIRS];     // quanto è sceso durante l'ultimo pullback (0-100)
+int      g_histSeqEncoded[MAX_PAIRS];        // sequenza ultime 5 candele encoded
+double   g_histBarRatio[MAX_PAIRS];          // rapporto altezza barra attuale / media ultime 10 barre
+
+double   g_prevRV[MAX_PAIRS];
+double   g_prev2RV[MAX_PAIRS];
+double   g_swingHigh[MAX_PAIRS];
+double   g_swingLow[MAX_PAIRS];
+int      g_histFlipBar[MAX_PAIRS];
+bool     g_reversalTracked = false;
+
+datetime g_lastBarTime       = 0;
+int      g_consecutiveLosses = 0;
+double   g_dailyStartBalance = 0;
+int      g_dailyLosses       = 0;
+int      g_dailyWins         = 0;
+double   g_dailyWinAmount    = 0;    // totale € vinti oggi
+double   g_dailyLossAmount   = 0;    // totale € persi oggi (valore positivo)
+datetime g_currentDay        = 0;
+bool     g_dailyStopped      = false;
+bool     g_testTradeDone     = false;
+
+int      g_validBars         = 0;
+bool     g_dataValidated     = false;
+int      g_nonGrayCount      = 0;
+int      g_autoFailCount     = 0;
+bool     g_usingFallback     = false;
+string   g_activeDataSource  = "";
+
+bool     g_isExporting       = false;
+string   g_exportBtnName     = "PRP_EXPORT_BTN";
+string   g_exportLabelName   = "PRP_EXPORT_LABEL";
+
+int      g_stdMinQuality   = 4;
+int      g_brkMinQuality   = 8;
+int      g_revMinQuality   = 4;
+int      g_revMinRV        = 65;
+
+//--- AI stats
+int      g_aiCalls         = 0;   // Chiamate AI totali
+int      g_aiConfirm       = 0;   // AI ha confermato
+int      g_aiReject        = 0;   // AI ha rifiutato
+int      g_aiErrors        = 0;   // Errori di connessione
+int      g_aiLastConf      = 0;   // Ultima confidenza ricevuta
+string   g_aiLastSignal    = "";  // Ultimo segnale AI
+string   g_aiLastError     = "";  // Ultimo errore AI
+
+//--- Warm-up & missed trade tracking
+int      g_warmupCounter      = 0;    // Contatore secondi per warm-up
+int      g_warmupInterval     = 600;  // Ogni 600 secondi = 10 minuti
+bool     g_warmupOK           = false; // Ultimo warm-up riuscito?
+datetime g_warmupLastTime     = 0;    // Timestamp ultimo warm-up OK
+int      g_warmupTotalOK      = 0;    // Totale warm-up riusciti
+int      g_warmupTotalFail    = 0;    // Totale warm-up falliti
+int      g_aiMissedTrades     = 0;    // Trade persi per errore connessione
+string   g_aiMissedLastSymbol = "";   // Ultimo cross perso per timeout
+int      g_aiMissedLastModule = 0;    // 0=nessuno, 1=STD, 2=BRK, 3=REV
+
+//--- A/B Test GPT
+bool     g_abGptEnabled       = false; // A/B test disabilitato — il server /predict fa già il log ibrido
+int      g_abGptCalls         = 0;     // Chiamate GPT fatte
+int      g_abGptAgree         = 0;     // GPT d'accordo con LightGBM
+int      g_abGptDisagree      = 0;     // GPT in disaccordo
+
+//--- Remote config (letta dal server ogni candela)
+bool     g_remoteConfigLoaded = false;
+int      g_remoteAggressiveness = 0;    // 0 = non cambiare
+bool     g_remoteUseAI       = true;
+int      g_remoteAIMinConf   = 0;      // 0 = non cambiare
+int      g_remoteMaxCLoss    = 0;
+int      g_remoteMaxDLoss    = 0;
+double   g_remoteMaxDProfit  = 0.0;
+int      g_remoteRVMax       = 0;
+double   g_remoteADRMax      = 0.0;
+double   g_remoteMinRR       = 0.0;
+bool     g_remoteBreakoutOn  = true;
+bool     g_remoteReversalOn  = false;
+
+//--- Feedback tracking (dati trade aperti per invio a chiusura)
+#define MAX_TRADES_TRACK 50
+int      g_fbTicket[MAX_TRADES_TRACK];
+string   g_fbSymbol[MAX_TRADES_TRACK];
+string   g_fbDirection[MAX_TRADES_TRACK];
+string   g_fbModule[MAX_TRADES_TRACK];
+double   g_fbRV[MAX_TRADES_TRACK];
+double   g_fbADX[MAX_TRADES_TRACK];
+double   g_fbADRPct[MAX_TRADES_TRACK];
+string   g_fbHist[MAX_TRADES_TRACK];
+int      g_fbAIConf[MAX_TRADES_TRACK];
+string   g_fbAISignal[MAX_TRADES_TRACK];
+double   g_fbEntryPrice[MAX_TRADES_TRACK];
+bool     g_fbSent[MAX_TRADES_TRACK];
+int      g_fbCount          = 0;
+int      g_fbSentCount      = 0;   // Feedback inviati con successo
+bool     g_fbLogged[MAX_TRADES_TRACK]; // Se gia' loggato su CSV
+double   g_fbNormMom[MAX_TRADES_TRACK];
+double   g_fbMomAccel[MAX_TRADES_TRACK];
+double   g_fbMomDist[MAX_TRADES_TRACK];
+bool     g_fbCompress[MAX_TRADES_TRACK];
+
+//+------------------------------------------------------------------+
+// |  FORWARD DECLARATIONS                                             |
+//+------------------------------------------------------------------+
+void   ApplyAggressiveness();
+string AggressivenessStr();
+void   CreateExportButton();
+void   ExportButtonDelete();
+void   ShowExportProgress(int current, int total);
+void   ExportDataFromEA();
+void   GetRadarDataForExport(string sym, double &value, string &histState);
+string GetADRForExport(string sym);
+bool   ReadCSV();
+int    ParseRadarType(string s);
+int    ParseHistogramState(string s);
+void   ParseADR(string s, double &pipFatti, double &media10gg);
+void   ParseRX(string s, int &rxType, int &rxAge, bool &rxPresent);
+bool   ValidateMarketData();
+void   CollectMarketData();
+void   GetRadarData(string sym, int shift, double &value, string &histState);
+int    DeriveRadarType(int histState, double rv);
+void   GetADR(string sym, double &pipFatti, double &media10gg);
+void   ExportCSVLog();
+void   UpdateHistogramTracking();
+void   ExtractHistogramFeatures_all();
+void   UpdateReversalTracking();
+void   CalculateMomentumMetrics();
+bool   IsWeekend();
+int    GetItalyHour();
+int    GetItalyDayOfWeek();
+bool   IsFridayEvening();
+bool   IsFridayProfitClose();
+bool   IsFridayLossClose();
+int    GetTradeSlot();
+bool   CheckStandardFilters(int idx, int &qualityCount, string &details);
+bool   CheckBreakoutFilters(int idx, int &qualityCount, string &details);
+int    CalculateStandardScore(int idx);
+int    CalculateBreakoutScore(int idx);
+double FindFractalSL(string sym, bool isLong);
+double CalculateATR_SL(string sym, bool isLong);
+double CalculateTP(string sym, double entryPrice, double slPrice, bool isLong, int dataIdx, double minRR);
+double GetLotSize(string sym);
+string NormSym(string sym);
+bool   SpreadOK(string sym);
+bool   MarketOpen(string sym);
+bool   HasOpenPosition(string sym);
+int    CountOpenPositions();
+bool   WouldDoubleExpose(string sym, bool isLong);
+void   ProcessStandard();
+void   ProcessBreakout();
+void   ProcessReversal();
+bool   TryOpenTrade(int idx, int origin, double minRR);
+void   SortCandidates(int &candidates[], int count);
+int    OpenOrder(string sym, bool isLong, double lots, double sl, double tp, string tag);
+void   ManageOpenTrades();
+void   CheckEarlyExit();
+void   CheckForceClose();
+void   CloseAllOrders();
+bool   CloseOrder(int ticket);
+void   ResetDailyStats();
+void   UpdateTradeResults();
+bool   CanTrade();
+void   ShowDashboard();
+void   DashboardDelete();
+string PadZero(int n);
+int    FindSymbolIndex(string sym);
+string RXStr(int rxType, int rxAge, bool rxPresent);
+string HistStateStr(int hs);
+string RadarTypeStr(int rt);
+string ErrDesc(int err);
+//--- AI Module
+string BuildAIRequestJSON(int idx, string tag);
+int    GetAIConfirmation(int idx, string tag);
+string AICallServer(string json);
+string AICallFeedback(string json, string url);
+int    AIParseConfidence(string response);
+string AIParseSignal(string response);
+void   AISendFeedback(int ticket, bool won);
+void   StoreTradeForFeedback(int ticket, int idx, string tag, bool isLong);
+void   CheckClosedTradesFeedback();
+string BuildFeedbackJSON(int ticket, string sym, string direction, string module,
+                         double profit, double pips, bool won,
+                         double rv, double adx, double adrPct, string hist,
+                         int aiConf, string aiSignal, double entryPrc, double exitPrc,
+                         double normMom, double momAccel, double momDist, bool isCompress);
+void   LogTradeToCSV(int ticket);
+void   AIWarmupPing();
+void   SyncWithServer();
+
+//+------------------------------------------------------------------+
+// |  INITIALIZATION                                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   g_consecutiveLosses = 0;
+   g_dailyStartBalance = AccountBalance();
+   g_currentDay        = TimeDay(TimeCurrent());
+   g_dailyStopped      = false;
+   g_dataCount         = 0;
+   g_lastBarTime       = 0;
+   g_histogramTracked  = false;
+   g_reversalTracked   = false;
+   g_testTradeDone     = false;
+   g_validBars         = 0;
+   g_dataValidated     = false;
+   g_nonGrayCount      = 0;
+   g_autoFailCount     = 0;
+   g_usingFallback     = false;
+   g_activeDataSource  = "";
+
+   ArrayInitialize(g_prevHistogram, HS_UNKNOWN);
+   ArrayInitialize(g_lightStreak, 0);
+   ArrayInitialize(g_prevWasGray, false);
+   ArrayInitialize(g_histConsecColor, 0);
+   ArrayInitialize(g_histBarsSinceGray, 0);
+   ArrayInitialize(g_histCycleCount, 0);
+   ArrayInitialize(g_histCrossedZero, false);
+   ArrayInitialize(g_histBarSlope, 0);
+   ArrayInitialize(g_histPullbackDepth, 0);
+   ArrayInitialize(g_histSeqEncoded, 0);
+   ArrayInitialize(g_histBarRatio, 0);
+
+   ArrayInitialize(g_prevRV, 0);
+   ArrayInitialize(g_prev2RV, 0);
+   ArrayInitialize(g_swingHigh, 0);
+   ArrayInitialize(g_swingLow, 0);
+   ArrayInitialize(g_histFlipBar, 999);
+
+   ArrayInitialize(g_normMomentum, 0);
+   ArrayInitialize(g_momentumSignal, 0);
+   ArrayInitialize(g_momentumAccel, 0);
+   ArrayInitialize(g_momentumDist, 0);
+   ArrayInitialize(g_isCompressing, false);
+
+   ArrayInitialize(g_fbTicket, 0);
+   ArrayInitialize(g_fbRV, 0);
+   ArrayInitialize(g_fbADX, 0);
+   ArrayInitialize(g_fbADRPct, 0);
+   ArrayInitialize(g_fbAIConf, 0);
+   ArrayInitialize(g_fbEntryPrice, 0);
+   ArrayInitialize(g_fbSent, false);
+   ArrayInitialize(g_fbLogged, false);
+   ArrayInitialize(g_fbNormMom, 0);
+   ArrayInitialize(g_fbMomAccel, 0);
+   ArrayInitialize(g_fbMomDist, 0);
+   ArrayInitialize(g_fbCompress, false);
+   g_fbCount = 0;
+   g_fbSentCount = 0;
+
+   g_warmupCounter    = 0;
+   g_warmupOK         = false;
+   g_warmupLastTime   = 0;
+   g_warmupTotalOK    = 0;
+   g_warmupTotalFail  = 0;
+   g_aiMissedTrades   = 0;
+   g_aiMissedLastSymbol = "";
+   g_aiMissedLastModule = 0;
+
+   //--- Primo warm-up immediato (non aspettare 10 minuti)
+   if(InpUseAI)
+   {
+      Print("[WARMUP] Ping iniziale...");
+      AIWarmupPing();
+      if(!g_warmupOK)
+      {
+         // Server probabilmente in cold start — riprova tra 45 secondi
+         g_warmupCounter = g_warmupInterval - 45;
+         Print("[WARMUP] Server non risponde (cold start?). Riprovo tra 45 sec...");
+      }
+      else
+      {
+         // Warm-up OK → prova subito il sync con dashboard
+         Print("[INIT] Warm-up OK, sync immediato con dashboard...");
+         SyncWithServer();
+         if(g_remoteConfigLoaded)
+            Print("[INIT] ✅ SYNC OK! Dashboard dovrebbe essere ONLINE");
+         else
+            Print("[INIT] ❌ SYNC fallito - controlla URL nella whitelist: https://profit-radar-ai.onrender.com/ea_status");
+      }
+   }
+
+   ApplyAggressiveness();
+
+   EventSetTimer(1);
+
+   if(InpShowExportBtn) CreateExportButton();
+
+   Print("==========================================");
+   Print("  PROFIT RADAR PRO EA v", VERSION_STR, " - Inizializzato");
+   Print("  Aggressivita': ", AggressivenessStr());
+   Print("  Max per cross: ", InpMaxPerPair, " | Max totali: ", InpMaxConcurrent);
+
+   if(InpDataMode == 0 || InpDataMode == 2)
+   {
+      g_activeDataSource = "CSV";
+      Print("  Data source: CSV FILE (forzato)");
+   }
+   else
+   {
+      g_activeDataSource = "AUTO";
+      Print("  Data source: AUTO (indicatore)");
+      Print("  Indicatore: ", InpRadarIndicator);
+      if(InpAutoFallback)
+         Print("  Fallback: se AUTO fallisce ", InpFallbackAfter, " volte, passa a CSV");
+   }
+
+   Print("  Lotto fisso: ", DoubleToString(InpFixedLots, 2));
+   Print("  ----------------------------------------");
+   Print("  PERCORSO CSV: MQL4/Files/", InpCSVFile);
+
+   int testHandle = FileOpen(InpCSVFile, FILE_CSV | FILE_READ | FILE_ANSI, ';');
+   if(testHandle != INVALID_HANDLE)
+   {
+      Print("  >>> CSV TROVATO! MQL4/Files/", InpCSVFile, " <<<");
+      FileClose(testHandle);
+   }
+   else
+   {
+      Print("  >>> CSV NON TROVATO! MQL4/Files/", InpCSVFile, " <<<");
+   }
+
+   Print("  Venerdi: NO nuovi trade dalle 15:00 Italia");
+
+   if(InpSundayStartH > 0 && InpSundayStartH < 24)
+      Print("  Domenica: trading attivo dalle ", PadZero(InpSundayStartH), ":00 Italia");
+   else
+      Print("  Domenica: trading DISATTIVATO");
+
+   //--- AI info
+   if(InpUseAI)
+   {
+      Print("  ----------------------------------------");
+      Print("  AI MODULE: ATTIVO");
+      Print("  Server: ", InpAIUrl);
+      Print("  Confidenza minima: ", InpAIMinConf, "%");
+      Print("  >>> OBBLIGATORIO: nessun trade senza conferma AI <<<");
+      Print("  Warm-up: ping /health ogni ", g_warmupInterval / 60, " minuti");
+      Print("  IMPORTANTE: Aggiungi URL in MT4:");
+      Print("  Strumenti > Opzioni > Expert Advisors > Allow WebRequest");
+      Print("  1. https://profit-radar-ai.onrender.com/predict");
+      Print("  2. https://profit-radar-ai.onrender.com/health");
+      Print("  3. https://profit-radar-ai.onrender.com/ea_status");
+      Print("  4. https://profit-radar-ai.onrender.com/feedback");
+      Print("  5. https://profit-radar-ai.onrender.com/predict_gpt");
+   }
+   else
+   {
+      Print("  AI MODULE: disabilitato (InpUseAI=false)");
+   }
+
+   Print("==========================================");
+
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+// |  DEINITIALIZATION                                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   EventKillTimer();
+   DashboardDelete();
+   ExportButtonDelete();
+   Print("Profit Radar Pro EA v", VERSION_STR, " - Deinizializzato");
+}
+
+//+------------------------------------------------------------------+
+// |  MAIN TICK HANDLER                                                |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   ManageOpenTrades();
+   CheckTestTrade();
+   CheckForceClose();
+
+   //--- Feedback automatico trade chiusi al server AI
+   if(InpUseAI) CheckClosedTradesFeedback();
+
+   datetime currentBarTime = iTime(Symbol(), PERIOD_M15, 0);
+   if(currentBarTime == g_lastBarTime) return;
+   g_lastBarTime = currentBarTime;
+
+   ResetDailyStats();
+   UpdateTradeResults();
+
+   //--- Sync stats con dashboard + leggi config remota (SEMPRE, prima dei return)
+   if(InpUseAI) SyncWithServer();
+
+   if(!CanTrade()) return;
+
+   //=== AUTO-EXPORT ===
+   if(InpAutoExport && !g_isExporting && !InpStrategyTest)
+   {
+      g_isExporting = true;
+      ExportDataFromEA();
+      g_isExporting = false;
+      if(g_dataValidated)
+      {
+         UpdateHistogramTracking();
+         ExtractHistogramFeatures_all();
+         UpdateReversalTracking();
+         CalculateMomentumMetrics();
+         CheckEarlyExit();
+         UpdateTradeResults();
+         ProcessStandard();
+         if(InpBreakoutOn) ProcessBreakout();
+         if(InpReversalOn)  ProcessReversal();
+         return;
+      }
+   }
+
+   bool dataOK = false;
+
+   if(InpDataMode == 0 || InpDataMode == 2)
+   {
+      dataOK = ReadCSV();
+   }
+   else if(InpDataMode == 1)
+   {
+      if(g_usingFallback)
+      {
+         dataOK = ReadCSV();
+      }
+      else
+      {
+         CollectMarketData();
+         dataOK = (g_dataCount > 0);
+
+         if(dataOK)
+         {
+            int liveCross = 0;
+            for(int v = 0; v < g_dataCount; v++)
+            {
+               if(g_histogramState[v] != HS_GRAY) liveCross++;
+               else if(MathAbs(g_radarValue[v]) > 0.01) liveCross++;
+            }
+
+            if(liveCross < 3)
+            {
+               g_autoFailCount++;
+               if(InpAutoFallback && g_autoFailCount >= InpFallbackAfter)
+               {
+                  g_usingFallback = true;
+                  g_activeDataSource = "FALLBACK";
+                  dataOK = ReadCSV();
+               }
+               else
+               {
+                  dataOK = false;
+               }
+            }
+            else
+            {
+               g_autoFailCount = 0;
+            }
+         }
+      }
+   }
+   if(!dataOK) return;
+
+   UpdateHistogramTracking();
+   ExtractHistogramFeatures_all();
+   UpdateReversalTracking();
+   CalculateMomentumMetrics();
+   CheckEarlyExit();
+   UpdateTradeResults();
+
+   if(!ValidateMarketData())
+   {
+      ShowDashboard();
+      return;
+   }
+
+   ProcessStandard();
+   if(InpBreakoutOn) ProcessBreakout();
+   if(InpReversalOn) ProcessReversal();
+}
+
+//+------------------------------------------------------------------+
+// |  TIMER                                                            |
+//+------------------------------------------------------------------+
+//--- Sync timer: manda stats ogni 5 minuti (non solo sulle candele M15)
+int      g_syncCounter      = 0;
+int      g_syncInterval     = 300;  // 5 minuti = 300 secondi
+datetime g_lastSyncTime     = 0;
+
+void OnTimer()
+{
+   ShowDashboard();
+
+   //--- Warm-up: ping /health ogni 10 minuti per mantenere Render attivo
+   if(InpUseAI)
+   {
+      g_warmupCounter++;
+      if(g_warmupCounter >= g_warmupInterval)
+      {
+         g_warmupCounter = 0;
+         AIWarmupPing();
+      }
+
+      //--- Sync stats ogni 5 minuti (non aspettare candele M15)
+      g_syncCounter++;
+      if(g_syncCounter >= g_syncInterval)
+      {
+         g_syncCounter = 0;
+         SyncWithServer();
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+// |  CHART EVENTS                                                     |
+//+------------------------------------------------------------------+
+void OnChartEvent(const int id,
+                  const long &lparam,
+                  const double &dparam,
+                  const string &sparam)
+{
+   if(id == CHARTEVENT_OBJECT_CLICK && sparam == g_exportBtnName)
+   {
+      if(g_isExporting) return;
+
+      g_isExporting = true;
+      ObjectSetString(0, g_exportBtnName, OBJPROP_TEXT, "WAIT...");
+      ObjectSetInteger(0, g_exportBtnName, OBJPROP_BGCOLOR, clrOrangeRed);
+      ChartRedraw();
+
+      ExportDataFromEA();
+
+      ObjectSetString(0, g_exportBtnName, OBJPROP_TEXT, "EXPORT DATA");
+      ObjectSetInteger(0, g_exportBtnName, OBJPROP_BGCOLOR, clrDarkBlue);
+      ObjectDelete(0, g_exportLabelName);
+      g_isExporting = false;
+      ChartRedraw();
+   }
+}
+
+//+------------------------------------------------------------------+
+// |  EXPORT BUTTON                                                    |
+//+------------------------------------------------------------------+
+void CreateExportButton()
+{
+   ObjectDelete(0, g_exportBtnName);
+   ObjectCreate(0, g_exportBtnName, OBJ_BUTTON, 0, 0, 0);
+   ObjectSetInteger(0, g_exportBtnName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, g_exportBtnName, OBJPROP_XDISTANCE, 1300);
+   ObjectSetInteger(0, g_exportBtnName, OBJPROP_YDISTANCE, 460);
+   ObjectSetInteger(0, g_exportBtnName, OBJPROP_XSIZE, 130);
+   ObjectSetInteger(0, g_exportBtnName, OBJPROP_YSIZE, 30);
+   ObjectSetString(0, g_exportBtnName, OBJPROP_TEXT, "EXPORT DATA");
+   ObjectSetInteger(0, g_exportBtnName, OBJPROP_COLOR, clrWhite);
+   ObjectSetInteger(0, g_exportBtnName, OBJPROP_BGCOLOR, clrDarkBlue);
+   ChartRedraw();
+}
+
+void ExportButtonDelete()
+{
+   ObjectDelete(0, g_exportBtnName);
+   ObjectDelete(0, g_exportLabelName);
+}
+
+void ShowExportProgress(int current, int total)
+{
+   int x = (int)ObjectGetInteger(0, g_exportBtnName, OBJPROP_XDISTANCE);
+   int y = (int)ObjectGetInteger(0, g_exportBtnName, OBJPROP_YDISTANCE);
+
+   if(ObjectFind(0, g_exportLabelName) < 0)
+   {
+      ObjectCreate(0, g_exportLabelName, OBJ_LABEL, 0, 0, 0);
+      ObjectSetInteger(0, g_exportLabelName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, g_exportLabelName, OBJPROP_FONTSIZE, 8);
+      ObjectSetString(0, g_exportLabelName, OBJPROP_FONT, "Arial");
+   }
+
+   ObjectSetInteger(0, g_exportLabelName, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, g_exportLabelName, OBJPROP_YDISTANCE, y + 35);
+   ObjectSetString(0, g_exportLabelName, OBJPROP_TEXT,
+      StringFormat("Exporting... %d/%d (%d%%)", current, total, (int)MathRound((double)current/total*100)));
+   ObjectSetInteger(0, g_exportLabelName, OBJPROP_COLOR, clrYellow);
+   ChartRedraw();
+}
+
+//+------------------------------------------------------------------+
+// |  EXPORT DATA FROM EA                                              |
+//+------------------------------------------------------------------+
+void ExportDataFromEA()
+{
+   datetime startTime = TimeCurrent();
+
+   int handle = FileOpen(InpCSVFile, FILE_CSV | FILE_WRITE, ';');
+   if(handle == INVALID_HANDLE)
+   {
+      Print("[EXPORT] Errore apertura file: ", InpCSVFile);
+      return;
+   }
+
+   FileWrite(handle, "Symbol", "Close", "EMA21", "EMA200", "EMA_Position",
+      "ADX", "RadarValue", "HistogramState", "ADR",
+      "HistConsecColor", "HistBarsSinceGray", "HistCycleCount", "HistCrossedZero",
+      "HistBarSlope", "HistPullbackDepth", "HistSeqEncoded", "HistBarRatio");
+
+   int exported = 0;
+   for(int p = 0; p < 28; p++)
+   {
+      ShowExportProgress(p + 1, 28);
+
+      string sym = PAIRS[p];
+      int shift = 1;
+
+      double close_now = iClose(sym, PERIOD_M15, shift);
+      if(close_now <= 0) continue;
+
+      double ema21  = iMA(sym, PERIOD_M15, 21, 0, MODE_EMA, PRICE_CLOSE, shift);
+      double ema200 = iMA(sym, PERIOD_M15, 200, 0, MODE_EMA, PRICE_CLOSE, shift);
+      double adx    = iADX(sym, PERIOD_M15, 14, PRICE_CLOSE, MODE_MAIN, shift);
+      int emaPosition = (ema21 > ema200) ? 1 : -1;
+
+      double radarValue = 0;
+      string histState = "NONE";
+      GetRadarDataForExport(sym, radarValue, histState);
+
+      string adrValue = GetADRForExport(sym);
+      int digits = (int)MarketInfo(sym, MODE_DIGITS);
+
+      //--- Feature istogramma calcolate direttamente dal simbolo
+      int hConsec, hSinceGray, hCycles, hCrossedZero, hSeqEnc;
+      double hSlope, hPullback, hBarRatio;
+      CalcHistFeatures(sym,
+                       hConsec, hSinceGray, hCycles, hCrossedZero,
+                       hSlope, hPullback, hSeqEnc, hBarRatio);
+
+      FileWrite(handle,
+          sym,
+          NormalizeDouble(close_now, digits),
+          NormalizeDouble(ema21, digits),
+          NormalizeDouble(ema200, digits),
+          emaPosition,
+          NormalizeDouble(adx, 1),
+          NormalizeDouble(radarValue, 2),
+          histState,
+          adrValue,
+          hConsec,
+          hSinceGray,
+          hCycles,
+          hCrossedZero,
+          DoubleToString(hSlope, 6),
+          DoubleToString(hPullback, 1),
+          hSeqEnc,
+          DoubleToString(hBarRatio, 3));
+
+      exported++;
+      if((p + 1) % 7 == 0) Sleep(200);
+   }
+
+   FileClose(handle);
+
+   int elapsed = (int)(TimeCurrent() - startTime);
+   Print("[EXPORT] Completato! ", exported, " cross in ", elapsed, " secondi");
+
+   g_dataValidated = false;
+   g_validBars = 0;
+   g_usingFallback = true;
+   g_activeDataSource = "CSV";
+   g_autoFailCount = 0;
+
+   bool loadOK = ReadCSV();
+   if(loadOK)
+   {
+      Print("[EXPORT] CSV caricato: ", g_dataCount, " cross");
+      bool valid = ValidateMarketData();
+      if(valid)
+         Print("[EXPORT] >>> DATI VALIDATI! <<<");
+      else
+         Print("[EXPORT] Validazione fallita");
+   }
+   else
+   {
+      Print("[EXPORT] ERRORE: impossibile rileggere il CSV");
+   }
+}
+
+//+------------------------------------------------------------------+
+// |  GET RADAR DATA PER EXPORT                                        |
+//+------------------------------------------------------------------+
+void GetRadarDataForExport(string sym, double &value, string &histState)
+{
+   int shift = 1;
+   double buffers[5];
+   ArrayInitialize(buffers, 0);
+
+   for(int i = 0; i < 5; i++)
+   {
+      buffers[i] = iCustom(sym, PERIOD_M15, InpRadarIndicator, i, shift);
+      if(MathAbs(buffers[i]) > 1000) buffers[i] = 0;
+   }
+
+   value = 0;
+   histState = "NONE";
+
+   if(buffers[0] > 0 && buffers[1] == 0 && buffers[2] == 0 && buffers[3] == 0)
+   { value = buffers[0]; histState = "GREEN_LIGHT"; return; }
+
+   if(buffers[1] > 0 && buffers[0] == 0 && buffers[2] == 0 && buffers[3] == 0)
+   { value = buffers[1]; histState = "GREEN_DARK"; return; }
+
+   if(buffers[2] < 0 && buffers[0] == 0 && buffers[1] == 0 && buffers[3] == 0)
+   { value = buffers[2]; histState = "RED_LIGHT"; return; }
+
+   if(buffers[3] < 0 && buffers[0] == 0 && buffers[1] == 0 && buffers[2] == 0)
+   { value = buffers[3]; histState = "RED_DARK"; return; }
+
+   if(buffers[4] != 0)
+   { value = buffers[4]; histState = "GRAY"; return; }
+}
+
+//+------------------------------------------------------------------+
+// |  GET ADR PER EXPORT                                               |
+//+------------------------------------------------------------------+
+string GetADRForExport(string sym)
+{
+   int digits = (int)MarketInfo(sym, MODE_DIGITS);
+   double point = MarketInfo(sym, MODE_POINT);
+   double pipMult = 1.0;
+   if(digits == 3 || digits == 5) pipMult = 10.0;
+
+   double todayHigh = iHigh(sym, PERIOD_D1, 0);
+   double todayLow  = iLow(sym, PERIOD_D1, 0);
+   if(todayHigh == 0 || todayLow == 0) return "0/0";
+
+   double todayRange = (todayHigh - todayLow) / point / pipMult;
+
+   double sum = 0;
+   int countedDays = 0;
+   for(int i = 1; i <= 10; i++)
+   {
+      double h = iHigh(sym, PERIOD_D1, i);
+      double l = iLow(sym, PERIOD_D1, i);
+      if(h == 0 || l == 0) continue;
+      sum += (h - l) / point / pipMult;
+      countedDays++;
+   }
+
+   double adr = (countedDays > 0) ? sum / countedDays : 0;
+   return IntegerToString((int)todayRange) + "/" + IntegerToString((int)adr);
+}
+
+//+------------------------------------------------------------------+
+// |  CSV READER                                                       |
+//+------------------------------------------------------------------+
+bool ReadCSV()
+{
+   int handle = FileOpen(InpCSVFile, FILE_CSV | FILE_READ | FILE_ANSI, ';');
+   if(handle == INVALID_HANDLE)
+   {
+      static datetime lastWarn = 0;
+      if(TimeCurrent() - lastWarn > 60)
+      {
+         Print("[CSV] FILE NON TROVATO: MQL4/Files/", InpCSVFile);
+         lastWarn = TimeCurrent();
+      }
+      return false;
+   }
+
+   datetime fileModTime = (datetime)FileGetInteger(handle, FILE_MODIFY_DATE);
+   int fileAge = (int)(TimeCurrent() - fileModTime);
+   if(InpCSVMaxAgeSec > 0 && fileAge > InpCSVMaxAgeSec)
+   {
+      FileClose(handle);
+      return false;
+   }
+
+   g_dataCount = 0;
+
+   while(!FileIsEnding(handle) && g_dataCount < MAX_PAIRS)
+   {
+      string fields[9];
+      bool rowComplete = true;
+
+      for(int f = 0; f < 9; f++)
+      {
+         if(FileIsEnding(handle) && f < 8) { rowComplete = false; break; }
+         fields[f] = FileReadString(handle);
+      }
+
+      if(!rowComplete) break;
+
+      for(int f = 0; f < 9; f++)
+      {
+         StringTrimLeft(fields[f]);
+         StringTrimRight(fields[f]);
+      }
+
+      if(StringFind(fields[0], "Symbol") >= 0) continue;
+      if(StringLen(fields[0]) < 6) continue;
+
+      StringToUpper(fields[7]);
+      StringReplace(fields[7], " ", "_");
+      if(fields[7] != "GREEN_LIGHT" && fields[7] != "GREEN_DARK" &&
+         fields[7] != "RED_LIGHT"   && fields[7] != "RED_DARK"   &&
+         fields[7] != "GRAY")
+         continue;
+
+      string firstChar = StringSubstr(fields[0], 0, 1);
+      if(firstChar >= "0" && firstChar <= "9") continue;
+
+      int idx = g_dataCount;
+
+      g_symbol[idx]         = fields[0];
+      g_close[idx]          = StringToDouble(fields[1]);
+      g_ema21[idx]          = StringToDouble(fields[2]);
+      g_ema200[idx]         = StringToDouble(fields[3]);
+      g_emaPosition[idx]    = (int)StringToDouble(fields[4]);
+      g_adx[idx]            = StringToDouble(fields[5]);
+
+      double parsedRV = StringToDouble(fields[6]);
+      if(MathAbs(parsedRV) > 10000)
+      {
+         Print("[CSV] RV corrotto per ", fields[0], " = ", DoubleToString(parsedRV, 0), " -> SCARTATO");
+         continue;
+      }
+
+      g_radarValue[idx]     = parsedRV;
+      g_histogramState[idx] = ParseHistogramState(fields[7]);
+      g_radarType[idx]      = DeriveRadarType(g_histogramState[idx], parsedRV);
+      ParseADR(fields[8], g_pipFatti[idx], g_media10gg[idx]);
+
+      g_rxType[idx]    = RX_NONE;
+      g_rxAge[idx]     = 0;
+      g_rxPresent[idx] = false;
+
+      if(g_media10gg[idx] > 0)
+         g_adrPercent[idx] = (g_pipFatti[idx] / g_media10gg[idx]) * 100.0;
+      else
+         g_adrPercent[idx] = 999.9;
+
+      g_valid[idx]  = true;
+      g_score[idx]  = 99999;
+      g_origin[idx] = ORIGIN_STD;
+
+      g_dataCount++;
+   }
+
+   FileClose(handle);
+
+   if(g_dataCount == 0) return false;
+
+   int nonGrayCSV = 0;
+   for(int c = 0; c < g_dataCount; c++)
+      if(g_histogramState[c] != HS_GRAY) nonGrayCSV++;
+
+   Print("[CSV] Caricato: ", g_dataCount, " cross | Non-GRAY: ", nonGrayCSV, "/28");
+   return true;
+}
+
+//+------------------------------------------------------------------+
+// |  PARSE HELPERS                                                    |
+//+------------------------------------------------------------------+
+int ParseRadarType(string s)
+{
+   StringToUpper(s);
+   if(s == "LONG")  return RT_LONG;
+   if(s == "SHORT") return RT_SHORT;
+   if(s == "RISE")  return RT_RISE;
+   if(s == "FALL")  return RT_FALL;
+   return RT_UNKNOWN;
+}
+
+int ParseHistogramState(string s)
+{
+   StringToUpper(s);
+   StringReplace(s, " ", "_");
+   if(s == "GREEN_LIGHT") return HS_GREEN_LIGHT;
+   if(s == "GREEN_DARK")  return HS_GREEN_DARK;
+   if(s == "RED_LIGHT")   return HS_RED_LIGHT;
+   if(s == "RED_DARK")    return HS_RED_DARK;
+   if(s == "GRAY")        return HS_GRAY;
+   return HS_UNKNOWN;
+}
+
+void ParseADR(string s, double &pipFatti, double &media10gg)
+{
+   int pos = StringFind(s, "/");
+   if(pos < 0) { pipFatti = 0; media10gg = 0; return; }
+   pipFatti  = StringToDouble(StringSubstr(s, 0, pos));
+   media10gg = StringToDouble(StringSubstr(s, pos + 1));
+}
+
+void ParseRX(string s, int &rxType, int &rxAge, bool &rxPresent)
+{
+   StringToUpper(s);
+   StringTrimLeft(s);
+   StringTrimRight(s);
+   rxType = RX_NONE; rxAge = 0; rxPresent = false;
+   if(StringLen(s) == 0 || s == "-" || s == "--" || s == "---") return;
+
+   int posH = StringFind(s, "NEW-H");
+   if(posH >= 0)
+   {
+      rxType = RX_NEW_H; rxPresent = true;
+      int age = (int)StringToDouble(StringSubstr(s, posH + 5));
+      rxAge = (age >= 1 && age <= 4) ? age : 1;
+      return;
+   }
+
+   int posL = StringFind(s, "NEW-L");
+   if(posL >= 0)
+   {
+      rxType = RX_NEW_L; rxPresent = true;
+      int age = (int)StringToDouble(StringSubstr(s, posL + 5));
+      rxAge = (age >= 1 && age <= 4) ? age : 1;
+      return;
+   }
+}
+
+//+------------------------------------------------------------------+
+// |  AGGRESSIVENESS PRESET                                            |
+//+------------------------------------------------------------------+
+void ApplyAggressiveness()
+{
+   InpBreakoutOn   = true;
+   InpReversalOn   = true;
+
+   Print(">>> Aggressivita': ", AggressivenessStr(), " (", InpAggressiveness, ")");
+
+   if(InpAggressiveness == 1)
+   {
+      InpMaxConsecLoss     = 2;
+      InpMaxDailyLoss      = 2;
+      InpMaxDailyProfit    = 2.0;
+      InpRV_Max            = 20;
+      InpADR_Max           = 50.0;
+      InpMinRR             = 2.0;
+      InpTPPercent         = 65.0;
+      InpBEPips            = 25;
+      InpBEProfit          = 8;
+      InpTrailActivate     = 0.6;
+      InpTrailATRMult      = 0.15;
+      InpBreakoutMinRR     = 2.2;
+      g_stdMinQuality      = 4;
+      g_brkMinQuality      = 8;
+      g_revMinQuality      = 4;
+      g_revMinRV           = 65;
+   }
+   else if(InpAggressiveness == 2)
+   {
+      InpMaxConsecLoss     = 2;
+      InpMaxDailyLoss      = 3;
+      InpMaxDailyProfit    = 3.0;
+      InpRV_Max            = 30;
+      InpADR_Max           = 60.0;
+      InpMinRR             = 1.5;
+      InpTPPercent         = 75.0;
+      InpBEPips            = 20;
+      InpBEProfit          = 5;
+      InpTrailActivate     = 0.8;
+      InpTrailATRMult      = 0.2;
+      InpBreakoutMinRR     = 1.8;
+      g_stdMinQuality      = 3;
+      g_brkMinQuality      = 7;
+      g_revMinQuality      = 3;
+      g_revMinRV           = 50;
+   }
+   else if(InpAggressiveness == 3)
+   {
+      InpMaxConsecLoss     = 3;
+      InpMaxDailyLoss      = 5;
+      InpMaxDailyProfit    = 5.0;
+      InpRV_Max            = 40;
+      InpADR_Max           = 75.0;
+      InpMinRR             = 1.2;
+      InpTPPercent         = 80.0;
+      InpBEPips            = 15;
+      InpBEProfit          = 3;
+      InpTrailActivate     = 1.0;
+      InpTrailATRMult      = 0.3;
+      InpBreakoutMinRR     = 1.5;
+      g_stdMinQuality      = 2;
+      g_brkMinQuality      = 5;
+      g_revMinQuality      = 2;
+      g_revMinRV           = 40;
+   }
+   else
+   {
+      Print("  WARNING: Aggressivita' non valida. Uso Moderato.");
+      InpAggressiveness = 2;
+      ApplyAggressiveness();
+      return;
+   }
+}
+
+string AggressivenessStr()
+{
+   switch(InpAggressiveness)
+   {
+      case 1:  return "CONSERVATIVO";
+      case 2:  return "MODERATO";
+      case 3:  return "AGGRESSIVO";
+      default: return "SCONOSCIUTO";
+   }
+}
+
+//+------------------------------------------------------------------+
+// |  TEST TRADE                                                       |
+//+------------------------------------------------------------------+
+void CheckTestTrade()
+{
+   if(!InpTestTrade) return;
+   if(g_testTradeDone) return;
+
+   g_testTradeDone = true;
+   InpTestTrade = false;
+
+   string sym    = Symbol();
+   int    digits = (int)MarketInfo(sym, MODE_DIGITS);
+   double point  = MarketInfo(sym, MODE_POINT);
+   double minLot = MarketInfo(sym, MODE_MINLOT);
+   double lotStep = MarketInfo(sym, MODE_LOTSTEP);
+   double ask    = MarketInfo(sym, MODE_ASK);
+
+   if(ask <= 0 || point <= 0) return;
+
+   double lots = MathFloor(minLot / lotStep) * lotStep;
+   if(lots < minLot) lots = minLot;
+   lots = NormalizeDouble(lots, 2);
+
+   double pipMult = (digits == 3 || digits == 5) ? 10.0 : 1.0;
+   double slDist  = 50 * point * pipMult;
+   double tpDist  = 100 * point * pipMult;
+   double slPrice = NormalizeDouble(ask - slDist, digits);
+   double tpPrice = NormalizeDouble(ask + tpDist, digits);
+
+   Print(">>> TEST TRADE: BUY ", sym, " Lots:", DoubleToString(lots, 2));
+
+   int ticket = OrderSend(sym, OP_BUY, lots, NormalizeDouble(ask, digits),
+                           InpMaxSlippage, 0, 0, "PRP_TEST", InpMagicNumber, 0, clrLime);
+
+   if(ticket < 0)
+   {
+      Print(">>> TEST FALLITO: err ", GetLastError());
+      return;
+   }
+
+   Print(">>> Ticket #", ticket, " aperto");
+
+   Sleep(300);
+   RefreshRates();
+
+   if(OrderSelect(ticket, SELECT_BY_TICKET))
+   {
+      double openPrice = OrderOpenPrice();
+      if(!OrderModify(ticket, openPrice, slPrice, tpPrice, 0, clrBlue))
+      {
+         Sleep(1000);
+         RefreshRates();
+         if(!OrderModify(ticket, openPrice, slPrice, tpPrice, 0, clrBlue))
+            Print("[TEST] OrderModify retry fallito: err ", GetLastError());
+      }
+   }
+
+   Print(">>> TEST TRADE COMPLETATO");
+}
+
+//+------------------------------------------------------------------+
+// |  VALIDATE DATA                                                    |
+//+------------------------------------------------------------------+
+bool ValidateMarketData()
+{
+   if(g_dataValidated) return true;
+
+   g_nonGrayCount = 0;
+   int nonZeroRV  = 0;
+   int differentHist = 0;
+   int lastHist   = -999;
+
+   for(int i = 0; i < g_dataCount; i++)
+   {
+      if(g_histogramState[i] != HS_GRAY) g_nonGrayCount++;
+      if(MathAbs(g_radarValue[i]) > 0.01) nonZeroRV++;
+      if(g_histogramState[i] != lastHist) { differentHist++; lastHist = g_histogramState[i]; }
+   }
+
+   Print("[VALIDAZIONE] Cross: ", g_dataCount, " | Non-GRAY: ", g_nonGrayCount,
+         " | RV!=0: ", nonZeroRV, " | Hist diversi: ", differentHist);
+
+   if(g_nonGrayCount < 1) { Print("[VALIDAZIONE] FALLITA: nessun cross non-GRAY"); return false; }
+   if(nonZeroRV < 1)      { Print("[VALIDAZIONE] FALLITA: nessun RV non-zero"); return false; }
+   if(differentHist < 1)  { Print("[VALIDAZIONE] FALLITA: un solo stato istogramma"); return false; }
+
+   g_dataValidated = true;
+   Print("[VALIDAZIONE] >>> OK! Dati verificati! <<<");
+   return true;
+}
+
+//+------------------------------------------------------------------+
+// |  AUTO DATA COLLECTION                                             |
+//+------------------------------------------------------------------+
+void CollectMarketData()
+{
+   g_dataCount = 0;
+
+   for(int p = 0; p < 28; p++)
+   {
+      string sym = PAIRS[p];
+      int shift = 1;
+
+      double closePrice = iClose(sym, PERIOD_M15, shift);
+      if(closePrice <= 0) continue;
+
+      int idx = g_dataCount;
+
+      g_symbol[idx]      = sym;
+      g_close[idx]       = closePrice;
+      g_ema21[idx]       = iMA(sym, PERIOD_M15, 21, 0, MODE_EMA, PRICE_CLOSE, shift);
+      g_ema200[idx]      = iMA(sym, PERIOD_M15, 200, 0, MODE_EMA, PRICE_CLOSE, shift);
+      g_adx[idx]         = iADX(sym, PERIOD_M15, 14, PRICE_CLOSE, MODE_MAIN, shift);
+      g_emaPosition[idx] = (g_ema21[idx] > g_ema200[idx]) ? 1 : -1;
+
+      double radarVal = 0;
+      string histState = "GRAY";
+      GetRadarData(sym, shift, radarVal, histState);
+
+      if(MathAbs(radarVal) > 10000)
+      {
+         Print("[AUTO] RV corrotto per ", sym, " -> SCARTATO");
+         continue;
+      }
+
+      g_radarValue[idx] = radarVal;
+      g_histogramState[idx] = ParseHistogramState(histState);
+      g_radarType[idx] = DeriveRadarType(g_histogramState[idx], radarVal);
+
+      GetADR(sym, g_pipFatti[idx], g_media10gg[idx]);
+      if(g_media10gg[idx] > 0)
+         g_adrPercent[idx] = (g_pipFatti[idx] / g_media10gg[idx]) * 100.0;
+      else
+         g_adrPercent[idx] = 999.9;
+
+      g_rxType[idx]    = RX_NONE;
+      g_rxAge[idx]     = 0;
+      g_rxPresent[idx] = false;
+      g_valid[idx]  = true;
+      g_score[idx]  = 99999;
+      g_origin[idx] = ORIGIN_STD;
+
+      g_dataCount++;
+   }
+
+   int activeCross = 0;
+   for(int c = 0; c < g_dataCount; c++)
+      if(g_histogramState[c] != HS_GRAY) activeCross++;
+
+   if(InpExportCSV && g_dataCount > 0)
+      ExportCSVLog();
+
+   if(g_dataCount > 0)
+      Print("[AUTO] Dati: ", g_dataCount, " cross | Non-GRAY: ", activeCross, "/28");
+}
+
+//+------------------------------------------------------------------+
+// |  GET RADAR DATA                                                   |
+//+------------------------------------------------------------------+
+void GetRadarData(string sym, int shift, double &value, string &histState)
+{
+   double buf[5];
+   ArrayInitialize(buf, 0);
+   for(int i = 0; i < 5; i++)
+   {
+      buf[i] = iCustom(sym, PERIOD_M15, InpRadarIndicator, i, shift);
+      if(MathAbs(buf[i]) > 1000) buf[i] = 0;
+   }
+
+   value = 0;
+   histState = "GRAY";
+
+   if(buf[0] > 0 && buf[1] == 0 && buf[2] == 0 && buf[3] == 0)
+   { value = buf[0]; histState = "GREEN_LIGHT"; return; }
+
+   if(buf[1] > 0 && buf[0] == 0 && buf[2] == 0 && buf[3] == 0)
+   { value = buf[1]; histState = "GREEN_DARK"; return; }
+
+   if(buf[2] < 0 && buf[0] == 0 && buf[1] == 0 && buf[3] == 0)
+   { value = buf[2]; histState = "RED_LIGHT"; return; }
+
+   if(buf[3] < 0 && buf[0] == 0 && buf[1] == 0 && buf[2] == 0)
+   { value = buf[3]; histState = "RED_DARK"; return; }
+
+   if(buf[4] != 0)
+   { value = buf[4]; histState = "GRAY"; return; }
+
+   static datetime lastBufWarn = 0;
+   if(TimeCurrent() - lastBufWarn > 300)
+   {
+      lastBufWarn = TimeCurrent();
+      Print("[RADAR] ATTENZIONE: ", sym, " tutti i buffer = 0");
+   }
+}
+
+//+------------------------------------------------------------------+
+// |  DERIVE RADAR TYPE                                                |
+//+------------------------------------------------------------------+
+int DeriveRadarType(int histState, double rv)
+{
+   if(histState == HS_GREEN_LIGHT || histState == HS_GREEN_DARK) return RT_LONG;
+   if(histState == HS_RED_LIGHT   || histState == HS_RED_DARK)   return RT_SHORT;
+   if(rv > 0)  return RT_RISE;
+   if(rv < 0)  return RT_FALL;
+   return RT_UNKNOWN;
+}
+
+//+------------------------------------------------------------------+
+// |  GET ADR                                                          |
+//+------------------------------------------------------------------+
+void GetADR(string sym, double &pipFatti, double &media10gg)
+{
+   int digits = (int)MarketInfo(sym, MODE_DIGITS);
+   double point = MarketInfo(sym, MODE_POINT);
+   if(point <= 0) { pipFatti = 0; media10gg = 0; return; }
+
+   double pipMult = 1.0;
+   if(digits == 3 || digits == 5) pipMult = 10.0;
+
+   double todayHigh = iHigh(sym, PERIOD_D1, 0);
+   double todayLow  = iLow(sym, PERIOD_D1, 0);
+   if(todayHigh == 0 || todayLow == 0) { pipFatti = 0; media10gg = 0; return; }
+
+   pipFatti = (todayHigh - todayLow) / point / pipMult;
+
+   double sum = 0;
+   int countedDays = 0;
+   for(int i = 1; i <= 10; i++)
+   {
+      double h = iHigh(sym, PERIOD_D1, i);
+      double l = iLow(sym, PERIOD_D1, i);
+      if(h == 0 || l == 0) continue;
+      sum += (h - l) / point / pipMult;
+      countedDays++;
+   }
+   media10gg = (countedDays > 0) ? sum / countedDays : 0;
+}
+
+//+------------------------------------------------------------------+
+// |  EXPORT CSV LOG                                                   |
+//+------------------------------------------------------------------+
+void ExportCSVLog()
+{
+   int handle = FileOpen(InpCSVFile, FILE_CSV | FILE_WRITE, ';');
+   if(handle == INVALID_HANDLE) return;
+
+   FileWrite(handle, "Symbol", "Close", "EMA21", "EMA200", "EMA_Position",
+             "ADX", "RadarValue", "HistogramState", "ADR");
+
+   for(int i = 0; i < g_dataCount; i++)
+   {
+      int digits = (int)MarketInfo(g_symbol[i], MODE_DIGITS);
+      string adrStr = IntegerToString((int)g_pipFatti[i]) + "/" +
+                      IntegerToString((int)g_media10gg[i]);
+
+      FileWrite(handle,
+         g_symbol[i],
+         NormalizeDouble(g_close[i], digits),
+         NormalizeDouble(g_ema21[i], digits),
+         NormalizeDouble(g_ema200[i], digits),
+         g_emaPosition[i],
+         NormalizeDouble(g_adx[i], 1),
+         NormalizeDouble(g_radarValue[i], 2),
+         HistStateStr(g_histogramState[i]),
+         adrStr);
+   }
+
+   FileClose(handle);
+}
+
+//+------------------------------------------------------------------+
+// |  HISTOGRAM TRACKING                                               |
+//+------------------------------------------------------------------+
+void UpdateHistogramTracking()
+{
+   for(int i = 0; i < g_dataCount; i++)
+   {
+      int current = g_histogramState[i];
+      int prev    = g_prevHistogram[i];
+
+      if(!g_histogramTracked)
+      {
+         g_lightStreak[i]  = 0;
+         g_prevWasGray[i]  = (current == HS_GRAY);
+         g_prevHistogram[i] = current;
+         continue;
+      }
+
+      bool curIsGreenLight = (current == HS_GREEN_LIGHT);
+      bool curIsRedLight   = (current == HS_RED_LIGHT);
+      bool curIsLight      = (curIsGreenLight || curIsRedLight);
+      bool prevIsGreenLight = (prev == HS_GREEN_LIGHT);
+      bool prevIsRedLight   = (prev == HS_RED_LIGHT);
+
+      bool sameColorLight = false;
+      if(curIsGreenLight && prevIsGreenLight) sameColorLight = true;
+      if(curIsRedLight   && prevIsRedLight)   sameColorLight = true;
+
+      if(curIsLight && sameColorLight)
+      {
+         g_lightStreak[i] = g_lightStreak[i] + 1;
+      }
+      else if(curIsLight && !sameColorLight)
+      {
+         g_lightStreak[i] = 1;
+         g_prevWasGray[i] = (prev == HS_GRAY);
+      }
+      else
+      {
+         if(prev == HS_GRAY || current == HS_GRAY)
+            g_prevWasGray[i] = true;
+         else
+            g_prevWasGray[i] = false;
+         g_lightStreak[i] = 0;
+      }
+
+      g_prevHistogram[i] = current;
+   }
+
+   g_histogramTracked = true;
+}
+
+//+------------------------------------------------------------------+
+// |  HISTOGRAM SEQUENCE FEATURES — Analizza ultime 8 candele          |
+// |  Estrae 8 feature numeriche per LightGBM e GPT                    |
+//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
+// |  CALCOLA FEATURE ISTOGRAMMA PER SIMBOLO                           |
+// |  Funzione riutilizzabile: sia per export che per tracking         |
+//+------------------------------------------------------------------+
+void CalcHistFeatures(string sym,
+                      int &outConsec, int &outSinceGray, int &outCycles, int &outCrossedZero,
+                      double &outSlope, double &outPullback, int &outSeqEnc, double &outBarRatio)
+{
+   //--- Leggi ultime 30 candele dell'istogramma (per consecutive, cycles, pullback)
+   //--- Ma solo ultime 8 per slope e ratio (più sensibili al recente)
+   #define HIST_LOOKBACK 30
+   #define HIST_RECENT   8
+   int    states[HIST_LOOKBACK];
+   double values[HIST_LOOKBACK];
+   ArrayInitialize(states, HS_GRAY);
+   ArrayInitialize(values, 0);
+
+   for(int b = 0; b < HIST_LOOKBACK; b++)
+   {
+      string histSt;
+      GetRadarData(sym, b + 1, values[b], histSt);
+      states[b] = ParseHistogramState(histSt);
+   }
+
+   //--- Feature 1: candele consecutive stesso colore (fino a 30)
+   outConsec = 0;
+   if(states[0] != HS_GRAY)
+   {
+      bool curIsGreen = (states[0] == HS_GREEN_LIGHT || states[0] == HS_GREEN_DARK);
+      outConsec = 1;
+      for(int b = 1; b < HIST_LOOKBACK; b++)
+      {
+         bool bIsGreen = (states[b] == HS_GREEN_LIGHT || states[b] == HS_GREEN_DARK);
+         if(curIsGreen == bIsGreen && states[b] != HS_GRAY)
+            outConsec++;
+         else
+            break;
+      }
+   }
+
+   //--- Feature 2: candele dall'ultimo GRAY (fino a 30)
+   outSinceGray = 0;
+   for(int b = 0; b < HIST_LOOKBACK; b++)
+   {
+      if(states[b] == HS_GRAY) break;
+      outSinceGray++;
+   }
+
+   //--- Feature 3: micro-cicli (ogni cambio di stato esatto nelle ultime 30)
+   //    GREEN_LIGHT→GREEN_DARK conta come ciclo (indebolimento)
+   //    GREEN→GRAY→RED conta come ciclo (inversione)
+   //    GREEN_LIGHT→GREEN_LIGHT NON conta (stesso stato)
+   outCycles = 0;
+   for(int b = 1; b < HIST_LOOKBACK; b++)
+   {
+      if(states[b] != states[b-1])
+         outCycles++;
+   }
+
+   //--- Feature 4: ha attraversato lo zero nelle ultime 30 candele
+   outCrossedZero = 0;
+   for(int b = 1; b < HIST_LOOKBACK; b++)
+   {
+      if(values[b] != 0 && values[b-1] != 0)
+      {
+         if((values[b] > 0 && values[b-1] < 0) || (values[b] < 0 && values[b-1] > 0))
+         {
+            outCrossedZero = 1;
+            break;
+         }
+      }
+   }
+
+   //--- Feature 5: slope altezza barre (regressione lineare ultime 5)
+   outSlope = 0;
+   {
+      int n = 5;
+      double sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+      for(int b = 0; b < n; b++)
+      {
+         double av = MathAbs(values[b]);
+         sumX  += b;
+         sumY  += av;
+         sumXY += b * av;
+         sumX2 += b * b;
+      }
+      double denom = n * sumX2 - sumX * sumX;
+      if(denom != 0)
+         outSlope = (n * sumXY - sumX * sumY) / denom;
+   }
+
+   //--- Feature 6: profondità pullback basata sui VALORI, non sul colore
+   //    Cerca il minimo relativo (barra più bassa) tra il max e la barra attuale
+   //    Misura quanto il trend si è ritirato dal suo massimo
+   outPullback = 0;
+   {
+      double maxVal = 0;
+      int maxBar = 0;
+      // Trova il massimo assoluto nelle ultime 30
+      for(int b = 0; b < HIST_LOOKBACK; b++)
+      {
+         if(MathAbs(values[b]) > maxVal)
+         {
+            maxVal = MathAbs(values[b]);
+            maxBar = b;
+         }
+      }
+
+      // Trova il minimo dopo il massimo (pullback dal picco)
+      double minAfterMax = maxVal;
+      for(int b = maxBar - 1; b >= 0; b--)
+      {
+         if(MathAbs(values[b]) < minAfterMax)
+            minAfterMax = MathAbs(values[b]);
+      }
+
+      if(maxVal > 0)
+         outPullback = (1.0 - minAfterMax / maxVal) * 100.0;
+   }
+
+   //--- Feature 7: sequenza ultime 5 candele encoded (5 stati, base 5)
+   //    GRAY=0, GREEN_LIGHT=1, GREEN_DARK=2, RED_LIGHT=3, RED_DARK=4
+   outSeqEnc = 0;
+   {
+      int mult = 1;
+      for(int b = 0; b < 5; b++)
+      {
+         int code = 0;
+         if(states[b] == HS_GREEN_LIGHT)      code = 1;
+         else if(states[b] == HS_GREEN_DARK)  code = 2;
+         else if(states[b] == HS_RED_LIGHT)   code = 3;
+         else if(states[b] == HS_RED_DARK)    code = 4;
+         outSeqEnc += code * mult;
+         mult *= 5;
+      }
+   }
+
+   //--- Feature 8: rapporto barra attuale / media ultime 7
+   outBarRatio = 1.0;
+   {
+      double currentAbs = MathAbs(values[0]);
+      double sumAbs = 0;
+      int count = 0;
+      for(int b = 1; b < HIST_RECENT; b++)
+      {
+         if(MathAbs(values[b]) > 0)
+         {
+            sumAbs += MathAbs(values[b]);
+            count++;
+         }
+      }
+      if(count > 0 && sumAbs > 0)
+         outBarRatio = currentAbs / (sumAbs / count);
+   }
+}
+
+
+void ExtractHistogramFeatures_all()
+{
+   for(int i = 0; i < g_dataCount; i++)
+   {
+      int hConsec, hSinceGray, hCycles, hCrossedZero, hSeqEnc;
+      double hSlope, hPullback, hBarRatio;
+      CalcHistFeatures(g_symbol[i],
+                       hConsec, hSinceGray, hCycles, hCrossedZero,
+                       hSlope, hPullback, hSeqEnc, hBarRatio);
+
+      g_histConsecColor[i]   = hConsec;
+      g_histBarsSinceGray[i] = hSinceGray;
+      g_histCycleCount[i]    = hCycles;
+      g_histCrossedZero[i]   = (hCrossedZero == 1);
+      g_histBarSlope[i]      = hSlope;
+      g_histPullbackDepth[i] = hPullback;
+      g_histSeqEncoded[i]    = hSeqEnc;
+      g_histBarRatio[i]      = hBarRatio;
+   }
+}
+
+//+------------------------------------------------------------------+
+// |  REVERSAL TRACKING                                                |
+//+------------------------------------------------------------------+
+void UpdateReversalTracking()
+{
+   for(int i = 0; i < g_dataCount; i++)
+   {
+      string sym = g_symbol[i];
+
+      g_prev2RV[i] = g_prevRV[i];
+      g_prevRV[i]  = g_radarValue[i];
+
+      double highMax = 0;
+      double lowMin  = 999999;
+      for(int b = 1; b <= InpRevDivergBars; b++)
+      {
+         double h = iHigh(sym, PERIOD_M15, b);
+         double l = iLow(sym, PERIOD_M15, b);
+         if(h > highMax) highMax = h;
+         if(l < lowMin && l > 0) lowMin = l;
+      }
+      g_swingHigh[i] = highMax;
+      g_swingLow[i]  = lowMin;
+
+      int curHist  = g_histogramState[i];
+      int prevHist = g_prevHistogram[i];
+
+      if(curHist == HS_RED_DARK && prevHist == HS_RED_LIGHT)
+         g_histFlipBar[i] = 0;
+      else if(curHist == HS_GREEN_DARK && prevHist == HS_GREEN_LIGHT)
+         g_histFlipBar[i] = 0;
+      else if(curHist == HS_GRAY && (prevHist == HS_RED_LIGHT || prevHist == HS_GREEN_LIGHT))
+         g_histFlipBar[i] = 0;
+      else
+      {
+         if(g_histFlipBar[i] < 999)
+            g_histFlipBar[i] = g_histFlipBar[i] + 1;
+      }
+   }
+
+   g_reversalTracked = true;
+}
+
+//+------------------------------------------------------------------+
+// |  MOMENTUM METRICS — Normalized Momentum System                    |
+// |  NM = (EMA8 - EMA21) / ATR14                                     |
+// |  Signal = EMA(NM, 5)                                              |
+// |  Acceleration = NM - NM[1]                                        |
+// |  Distance = abs(NM - Signal)                                      |
+// |  Compression: Distance < 0.15 AND ATR decreasing                 |
+//+------------------------------------------------------------------+
+void CalculateMomentumMetrics()
+{
+   for(int i = 0; i < g_dataCount; i++)
+   {
+      string sym = g_symbol[i];
+
+      //--- Calcola NM per ultimi 5 bar
+      double nm[5];
+      ArrayInitialize(nm, 0);
+
+      for(int bar = 0; bar < 5; bar++)
+      {
+         double ema8  = iMA(sym, PERIOD_M15, 8, 0, MODE_EMA, PRICE_CLOSE, bar);
+         double ema21 = iMA(sym, PERIOD_M15, 21, 0, MODE_EMA, PRICE_CLOSE, bar);
+         double atr   = iATR(sym, PERIOD_M15, 14, bar);
+
+         if(atr > 0)
+            nm[bar] = (ema8 - ema21) / atr;
+         else
+            nm[bar] = 0;
+      }
+
+      //--- Normalized Momentum corrente
+      g_normMomentum[i] = nm[0];
+
+      //--- Signal = EMA(5) manuale partendo dal piu' vecchio
+      double k = 2.0 / 6.0;  // k = 2/(period+1) = 2/6
+      double sig = nm[4];     // seed = valore piu' vecchio
+      sig = nm[3] * k + sig * (1.0 - k);
+      sig = nm[2] * k + sig * (1.0 - k);
+      sig = nm[1] * k + sig * (1.0 - k);
+      sig = nm[0] * k + sig * (1.0 - k);
+      g_momentumSignal[i] = sig;
+
+      //--- Acceleration = NM - NM[1]
+      g_momentumAccel[i] = nm[0] - nm[1];
+
+      //--- Distance = abs(NM - Signal)
+      g_momentumDist[i] = MathAbs(nm[0] - sig);
+
+      //--- Compression: Distance < 0.15 AND ATR decreasing
+      double atrNow  = iATR(sym, PERIOD_M15, 14, 0);
+      double atrPrev = iATR(sym, PERIOD_M15, 14, 4);
+      g_isCompressing[i] = (g_momentumDist[i] < 0.15 && atrNow > 0 && atrNow < atrPrev);
+   }
+}
+
+//+------------------------------------------------------------------+
+// |  WEEKEND / FRIDAY CHECK                                           |
+//+------------------------------------------------------------------+
+bool IsWeekend()
+{
+   int dow = GetItalyDayOfWeek();
+   //--- Sabato: sempre chiuso
+   if(dow == 6) return true;
+   //--- Domenica: chiuso solo se prima dell'orario di inizio
+   if(dow == 0)
+   {
+      int h = GetItalyHour();
+      // Se InpSundayStartH = 23 e sono le 23:00 di domenica -> non e' piu' weekend!
+      // Se InpSundayStartH = 0 (midnight) -> domenica e' sempre weekend (inizia lunedi)
+      if(h >= InpSundayStartH && InpSundayStartH > 0)
+         return false;   // Domenica sera: mercato aperto!
+      return true;        // Domenica mattina/pomeriggio: chiuso
+   }
+   return false;
+}
+
+int GetItalyHour()
+{
+   int h = (int)TimeHour(TimeCurrent()) + InpTimeOffset;
+   while(h >= 24) h -= 24;
+   while(h < 0)   h += 24;
+   return h;
+}
+
+int GetItalyDayOfWeek()
+{
+   int dow = DayOfWeek();
+   int h = (int)TimeHour(TimeCurrent()) + InpTimeOffset;
+   if(h < 0)  { dow--; if(dow < 0) dow = 6; }
+   if(h >= 24) { dow++; if(dow > 6) dow = 0; }
+   return dow;
+}
+
+bool IsFridayEvening()
+{
+   if(GetItalyDayOfWeek() != 5) return false;
+   int h = GetItalyHour();
+   int m = (int)TimeMinute(TimeCurrent());
+   if(h > InpFriForceCloseH) return true;
+   if(h == InpFriForceCloseH && m >= InpFriForceCloseM) return true;
+   return false;
+}
+
+bool IsFridayProfitClose()
+{
+   if(GetItalyDayOfWeek() != 5) return false;
+   int h = GetItalyHour();
+   int m = (int)TimeMinute(TimeCurrent());
+   if(h > InpFriCloseProfitH) return true;
+   if(h == InpFriCloseProfitH && m >= InpFriCloseProfitM) return true;
+   return false;
+}
+
+bool IsFridayLossClose()
+{
+   if(GetItalyDayOfWeek() != 5) return false;
+   int h = GetItalyHour();
+   int m = (int)TimeMinute(TimeCurrent());
+   if(h > InpFriCloseLossH) return true;
+   if(h == InpFriCloseLossH && m >= InpFriCloseLossM) return true;
+   return false;
+}
+
+//+------------------------------------------------------------------+
+// |  TRADE SLOT - NO TRADE VENERDI DOPO LE 15:00 ITALIA              |
+//+------------------------------------------------------------------+
+int GetTradeSlot()
+{
+   if(IsWeekend())       return 0;
+   if(IsFridayEvening()) return 0;
+   //--- Venerdi dopo le 15:00 Italia: NO nuovi trade
+   if(GetItalyDayOfWeek() == 5 && GetItalyHour() >= 15) return 0;
+   return 1;
+}
+
+//+------------------------------------------------------------------+
+// |  STANDARD FILTERS                                                 |
+//+------------------------------------------------------------------+
+bool CheckStandardFilters(int idx, int &qualityCount, string &details)
+{
+   qualityCount = 0;
+   details = "";
+
+   if(g_radarType[idx] != RT_LONG && g_radarType[idx] != RT_SHORT)
+   {
+      details = "Nessuna direzione";
+      return false;
+   }
+
+   bool isLong = (g_radarType[idx] == RT_LONG);
+
+   if(g_adrPercent[idx] < InpADR_Max)
+      qualityCount++;
+   else
+      StringConcatenate(details, details, "ADR=" + DoubleToString(g_adrPercent[idx], 0) + "% ");
+
+   if(MathAbs(g_radarValue[idx]) < InpRV_Max)
+      qualityCount++;
+   else
+      StringConcatenate(details, details, "RV=" + DoubleToString(MathAbs(g_radarValue[idx]), 0) + " ");
+
+   if(isLong && g_emaPosition[idx] == 1)
+      qualityCount++;
+   else if(!isLong && g_emaPosition[idx] == -1)
+      qualityCount++;
+   else
+      StringConcatenate(details, details, "EMA! ");
+
+   if(isLong && g_histogramState[idx] == HS_GREEN_LIGHT)
+      qualityCount++;
+   else if(!isLong && g_histogramState[idx] == HS_RED_LIGHT)
+      qualityCount++;
+   else
+      StringConcatenate(details, details, "Hist=" + HistStateStr(g_histogramState[idx]) + " ");
+
+   return true;
+}
+
+//+------------------------------------------------------------------+
+// |  BREAKOUT FILTERS                                                 |
+//+------------------------------------------------------------------+
+bool CheckBreakoutFilters(int idx, int &qualityCount, string &details)
+{
+   qualityCount = 0;
+   details = "";
+
+   bool isLong = (g_histogramState[idx] == HS_GREEN_LIGHT);
+
+   if(g_histogramState[idx] != HS_GREEN_LIGHT && g_histogramState[idx] != HS_RED_LIGHT)
+   { details = "Non LIGHT"; return false; }
+
+   if(!g_prevWasGray[idx])
+   { details = "Non da GRAY"; return false; }
+
+   if(g_lightStreak[idx] >= InpBreakoutMinLIGHT)
+      qualityCount++;
+   else
+      StringConcatenate(details, details, "Streak=" + IntegerToString(g_lightStreak[idx]) + " ");
+
+   if(g_close[idx] > 0)
+   {
+      double emaGapPct = MathAbs(g_ema21[idx] - g_ema200[idx]) / g_close[idx] * 100.0;
+      if(emaGapPct < InpBreakoutEMAGapPct) qualityCount++;
+      else StringConcatenate(details, details, "EMAgap=" + DoubleToString(emaGapPct, 2) + "% ");
+   }
+
+   double absRV = MathAbs(g_radarValue[idx]);
+   if(absRV < InpBreakoutMaxRV) qualityCount++;
+   else StringConcatenate(details, details, "RV=" + DoubleToString(absRV, 0) + " ");
+
+   if(g_adx[idx] < InpBreakoutMaxADX) qualityCount++;
+   else StringConcatenate(details, details, "ADX=" + DoubleToString(g_adx[idx], 0) + " ");
+
+   if(g_adrPercent[idx] < InpBreakoutMaxADR) qualityCount++;
+   else StringConcatenate(details, details, "ADR=" + DoubleToString(g_adrPercent[idx], 0) + "% ");
+
+   string sym = g_symbol[idx];
+   double atrNow  = iATR(sym, PERIOD_M15, InpATR_Period, 1);
+   double atrPrev = iATR(sym, PERIOD_M15, InpATR_Period, 4);
+   if(atrNow > 0 && atrPrev > 0 && atrNow > atrPrev) qualityCount++;
+   else StringConcatenate(details, details, "ATRflat ");
+
+   if(isLong && g_close[idx] >= g_ema21[idx]) qualityCount++;
+   else if(!isLong && g_close[idx] <= g_ema21[idx]) qualityCount++;
+   else StringConcatenate(details, details, "PriceEMA! ");
+
+   double atr = iATR(sym, PERIOD_M15, InpATR_Period, 1);
+   if(atr > 0)
+   {
+      double open0    = iOpen(sym, PERIOD_M15, 1);
+      double body     = MathAbs(g_close[idx] - open0);
+      double bodyRatio = body / atr;
+      if(bodyRatio >= InpBreakoutMinBody) qualityCount++;
+      else StringConcatenate(details, details, "Body=" + DoubleToString(bodyRatio, 2) + " ");
+   }
+
+   return true;
+}
+
+//+------------------------------------------------------------------+
+// |  SCORING                                                          |
+//+------------------------------------------------------------------+
+int CalculateStandardScore(int idx)
+{
+   int score = 0;
+   double absRV = MathAbs(g_radarValue[idx]);
+   if(absRV < 10)       score += 0;
+   else if(absRV < 20)  score += 100;
+   else                 score += 200;
+
+   if(g_adrPercent[idx] < 40)      score += 0;
+   else if(g_adrPercent[idx] < 50) score += 10;
+   else                             score += 20;
+
+   if(g_adx[idx] > 25) score += 0;
+   else if(g_adx[idx] > 20) score += 2;
+   else score += 5;
+
+   if(g_close[idx] > 0)
+   {
+      double emaGap = MathAbs(g_ema21[idx] - g_ema200[idx]) / g_close[idx] * 10000;
+      if(emaGap < 20)      score += 0;
+      else if(emaGap < 50) score += 3;
+      else                 score += 6;
+   }
+
+   return score;
+}
+
+int CalculateBreakoutScore(int idx)
+{
+   int score = InpBreakoutScoreBonus;
+   double absRV = MathAbs(g_radarValue[idx]);
+   if(absRV < 5)        score -= 40;
+   else if(absRV < 10)  score -= 20;
+
+   if(g_close[idx] > 0)
+   {
+      double emaGapPct = MathAbs(g_ema21[idx] - g_ema200[idx]) / g_close[idx] * 100.0;
+      if(emaGapPct < 0.05)      score -= 30;
+      else if(emaGapPct < 0.10) score -= 15;
+   }
+
+   if(g_lightStreak[idx] >= 4)      score -= 20;
+   else if(g_lightStreak[idx] >= 3) score -= 10;
+
+   if(g_adrPercent[idx] < 30) score -= 10;
+   if(g_adx[idx] < 15) score -= 10;
+
+   return score;
+}
+
+//+------------------------------------------------------------------+
+// |  FRACTAL SL / ATR SL                                              |
+//+------------------------------------------------------------------+
+double FindFractalSL(string sym, bool isLong)
+{
+   int digits = (int)MarketInfo(sym, MODE_DIGITS);
+   double point = MarketInfo(sym, MODE_POINT);
+   double currentPrice = iClose(sym, PERIOD_M15, 0);
+
+   //--- Pip multiplier
+   double pipMult = 1.0;
+   if(digits == 3 || digits == 5) pipMult = 10.0;
+   double pipSize = point * pipMult;
+
+   //--- SL massimo: 50 pip
+   double maxSLPips = 50.0;
+   double maxSLDist = maxSLPips * pipSize;
+
+   //--- Cerca fractal più vicino
+   for(int i = 2; i <= InpFractalBars; i++)
+   {
+      if(isLong)
+      {
+         double fracLow = iFractals(sym, PERIOD_M15, MODE_LOWER, i);
+         if(fracLow > 0 && fracLow < currentPrice)
+         {
+            double slDist = currentPrice - fracLow;
+            if(slDist <= maxSLDist)
+               return NormalizeDouble(fracLow, digits);
+            else
+            {
+               Print("[SL] ", sym, " fractal troppo lontano: ", DoubleToString(slDist/pipSize, 0), " pips > max ", DoubleToString(maxSLPips, 0));
+               break; // Fractal troppo lontano, usa ATR
+            }
+         }
+      }
+      else
+      {
+         double fracHigh = iFractals(sym, PERIOD_M15, MODE_UPPER, i);
+         if(fracHigh > 0 && fracHigh > currentPrice)
+         {
+            double slDist = fracHigh - currentPrice;
+            if(slDist <= maxSLDist)
+               return NormalizeDouble(fracHigh, digits);
+            else
+            {
+               Print("[SL] ", sym, " fractal troppo lontano: ", DoubleToString(slDist/pipSize, 0), " pips > max ", DoubleToString(maxSLPips, 0));
+               break; // Fractal troppo lontano, usa ATR
+            }
+         }
+      }
+   }
+
+   //--- Fallback: ATR con cappello
+   double slPrice = CalculateATR_SL(sym, isLong);
+   double slDist = MathAbs(currentPrice - slPrice);
+   if(slDist > maxSLDist)
+   {
+      Print("[SL] ", sym, " ATR SL troppo largo: ", DoubleToString(slDist/pipSize, 0), " pips -> cappello a ", DoubleToString(maxSLPips, 0));
+      if(isLong)
+         slPrice = NormalizeDouble(currentPrice - maxSLDist, digits);
+      else
+         slPrice = NormalizeDouble(currentPrice + maxSLDist, digits);
+   }
+   return slPrice;
+}
+
+double CalculateATR_SL(string sym, bool isLong)
+{
+   int digits = (int)MarketInfo(sym, MODE_DIGITS);
+   double atr = iATR(sym, PERIOD_M15, InpATR_Period, 1);
+   if(atr <= 0) return 0;
+   double price = iClose(sym, PERIOD_M15, 0);
+   if(isLong)
+      return NormalizeDouble(price - atr * InpATR_Mult, digits);
+   else
+      return NormalizeDouble(price + atr * InpATR_Mult, digits);
+}
+
+//+------------------------------------------------------------------+
+// |  TP CALCULATION                                                   |
+//+------------------------------------------------------------------+
+double CalculateTP(string sym, double entryPrice, double slPrice, bool isLong, int dataIdx, double minRR)
+{
+   int digits = (int)MarketInfo(sym, MODE_DIGITS);
+   double point = MarketInfo(sym, MODE_POINT);
+   if(point <= 0) return 0;
+
+   // Pip multiplier: 5-digit = 10, 3-digit = 10, 4-digit = 1
+   double pipMult = 1.0;
+   if(digits == 3 || digits == 5) pipMult = 10.0;
+   double pipSize = point * pipMult;  // dimensione di 1 pip in prezzo
+
+   double pipResidui = g_media10gg[dataIdx] - g_pipFatti[dataIdx];
+   if(pipResidui <= 0) return 0;
+
+   double tpPips = pipResidui * (InpTPPercent / 100.0);
+   double tpDistance = tpPips * pipSize;  // ← FIX: pipSize invece di point
+   double slDistance = MathAbs(entryPrice - slPrice);
+   if(slDistance <= 0) return 0;
+
+   double rr = tpDistance / slDistance;
+   if(rr < minRR)
+   {
+      Print("[TP] ", sym, " RR=", DoubleToString(rr, 2), " < min ", DoubleToString(minRR, 1),
+            " | tpPips=", DoubleToString(tpPips, 1), " slDist=", DoubleToString(slDistance/pipSize, 1), " pips");
+      return 0;
+   }
+
+   if(isLong)
+      return NormalizeDouble(entryPrice + tpDistance, digits);
+   else
+      return NormalizeDouble(entryPrice - tpDistance, digits);
+}
+
+//+------------------------------------------------------------------+
+// |  LOT SIZE                                                         |
+//+------------------------------------------------------------------+
+double GetLotSize(string sym)
+{
+   double minLot  = MarketInfo(sym, MODE_MINLOT);
+   double maxLot  = MarketInfo(sym, MODE_MAXLOT);
+   double lotStep = MarketInfo(sym, MODE_LOTSTEP);
+   double lots = InpFixedLots;
+   lots = MathFloor(lots / lotStep) * lotStep;
+   lots = NormalizeDouble(lots, 2);
+   if(lots < minLot) lots = minLot;
+   if(lots > maxLot) lots = maxLot;
+   return lots;
+}
+
+//+------------------------------------------------------------------+
+// |  UTILITY TRADE CHECKS                                             |
+//+------------------------------------------------------------------+
+string NormSym(string sym)
+{
+   StringReplace(sym, "+", "");
+   if(StringLen(sym) > 6)
+      sym = StringSubstr(sym, 0, 6);
+   return sym;
+}
+
+bool SpreadOK(string sym)
+{
+   if(MarketInfo(sym, MODE_SPREAD) > InpMaxSpread) return false;
+   return true;
+}
+
+bool MarketOpen(string sym)
+{
+   return (MarketInfo(sym, MODE_BID) > 0);
+}
+
+bool HasOpenPosition(string sym)
+{
+   string normSym = NormSym(sym);
+   int count = 0;
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(OrderMagicNumber() != InpMagicNumber) continue;
+      if(OrderType() > OP_SELL) continue;
+      if(NormSym(OrderSymbol()) == normSym) count++;
+   }
+   if(count >= InpMaxPerPair) return true;
+   return false;
+}
+
+int CountOpenPositions()
+{
+   int count = 0;
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(OrderMagicNumber() != InpMagicNumber) continue;
+      if(OrderType() <= OP_SELL) count++;
+   }
+   return count;
+}
+
+bool WouldDoubleExpose(string sym, bool isLong)
+{
+   string normSym  = NormSym(sym);
+   string baseCCY  = StringSubstr(normSym, 0, 3);
+   string quoteCCY = StringSubstr(normSym, 3, 3);
+   string ourLongCCY  = isLong ? baseCCY : quoteCCY;
+   string ourShortCCY = isLong ? quoteCCY : baseCCY;
+
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(OrderMagicNumber() != InpMagicNumber) continue;
+      if(OrderType() > OP_SELL) continue;
+
+      string oSym = NormSym(OrderSymbol());
+      if(oSym == normSym) return true;
+
+      string oBase  = StringSubstr(oSym, 0, 3);
+      string oQuote = StringSubstr(oSym, 3, 3);
+      bool oIsLong  = (OrderType() == OP_BUY);
+      string oLongCCY  = oIsLong ? oBase : oQuote;
+      string oShortCCY = oIsLong ? oQuote : oBase;
+
+      if(ourLongCCY == oLongCCY || ourShortCCY == oShortCCY) return true;
+   }
+   return false;
+}
+
+//+------------------------------------------------------------------+
+// |  PROCESS STANDARD                                                 |
+//+------------------------------------------------------------------+
+void ProcessStandard()
+{
+   if(GetTradeSlot() == 0) return;
+   int openCount = CountOpenPositions();
+
+   int candidates[MAX_PAIRS];
+   int candidateCount = 0;
+
+   for(int i = 0; i < g_dataCount; i++)
+   {
+      int qCount = 0;
+      string details = "";
+      if(!CheckStandardFilters(i, qCount, details)) continue;
+
+      if(qCount < g_stdMinQuality)
+      {
+         Print("[STD] ", g_symbol[i], " filtri: ", qCount, "/4 < min ", g_stdMinQuality);
+         continue;
+      }
+
+      g_valid[i]  = true;
+      g_score[i]  = CalculateStandardScore(i) - (qCount * 20);
+      g_origin[i] = ORIGIN_STD;
+      candidates[candidateCount] = i;
+      candidateCount++;
+
+      Print("[STD] ", g_symbol[i], " qualifica: ", qCount, "/4 | score: ", g_score[i]);
+   }
+
+   if(candidateCount == 0) return;
+
+   SortCandidates(candidates, candidateCount);
+
+   for(int c = 0; c < candidateCount && openCount < InpMaxConcurrent; c++)
+   {
+      int idx = candidates[c];
+      if(TryOpenTrade(idx, ORIGIN_STD, InpMinRR))
+         openCount++;
+   }
+}
+
+//+------------------------------------------------------------------+
+// |  PROCESS BREAKOUT                                                 |
+//+------------------------------------------------------------------+
+void ProcessBreakout()
+{
+   if(!InpBreakoutOn) return;
+   if(GetTradeSlot() == 0) return;
+   int openCount = CountOpenPositions();
+
+   int candidates[MAX_PAIRS];
+   int candidateCount = 0;
+
+   for(int i = 0; i < g_dataCount; i++)
+   {
+      int qCount = 0;
+      string details = "";
+      if(!CheckBreakoutFilters(i, qCount, details)) continue;
+
+      if(qCount < g_brkMinQuality)
+      {
+         Print("[BRK] ", g_symbol[i], " filtri: ", qCount, "/8 < min ", g_brkMinQuality);
+         continue;
+      }
+
+      g_valid[i]  = true;
+      g_score[i]  = CalculateBreakoutScore(i) - (qCount * 15);
+      g_origin[i] = ORIGIN_BREAKOUT;
+      candidates[candidateCount] = i;
+      candidateCount++;
+
+      Print("[BRK] ", g_symbol[i], " qualifica: ", qCount, "/8 | score: ", g_score[i]);
+   }
+
+   if(candidateCount == 0) return;
+
+   SortCandidates(candidates, candidateCount);
+
+   for(int c = 0; c < candidateCount && openCount < InpMaxConcurrent; c++)
+   {
+      int idx = candidates[c];
+      if(TryOpenTrade(idx, ORIGIN_BREAKOUT, InpBreakoutMinRR))
+         openCount++;
+   }
+}
+
+//+------------------------------------------------------------------+
+// |  PROCESS REVERSAL                                                 |
+//+------------------------------------------------------------------+
+void ProcessReversal()
+{
+   if(!InpReversalOn) return;
+   if(GetTradeSlot() == 0) return;
+   if(!g_reversalTracked) return;
+   int openCount = CountOpenPositions();
+
+   int candidates[MAX_PAIRS];
+   int revScores[MAX_PAIRS];
+   int revQuality[MAX_PAIRS];
+   ArrayInitialize(candidates, 0);
+   ArrayInitialize(revScores, 0);
+   ArrayInitialize(revQuality, 0);
+   int candidateCount = 0;
+
+   for(int i = 0; i < g_dataCount; i++)
+   {
+      double absRV = MathAbs(g_radarValue[i]);
+      double absPrevRV = MathAbs(g_prevRV[i]);
+
+      if(absRV < g_revMinRV) continue;
+      if(g_radarValue[i] == 0) continue;
+
+      if(absRV > 100)
+      {
+         Print("[REV] ", g_symbol[i], " SCARTATO: |RV|=", DoubleToString(absRV, 1), " > 100");
+         continue;
+      }
+
+      if(g_adx[i] < 30)
+      {
+         Print("[REV] ", g_symbol[i], " SCARTATO: ADX=", DoubleToString(g_adx[i], 1), " < 30");
+         continue;
+      }
+
+      int qCount = 0;
+      string details = "";
+      int hist = g_histogramState[i];
+
+      // Q1
+      if(g_adrPercent[i] >= InpReversalADR) qCount++;
+      else StringConcatenate(details, details, "ADR=" + DoubleToString(g_adrPercent[i], 0) + "% ");
+
+      // Q2
+      if(g_adx[i] >= 50) qCount++;
+      else StringConcatenate(details, details, "ADX=" + DoubleToString(g_adx[i], 0) + " ");
+
+      // Q3
+      bool histTransition = false;
+      if(hist == HS_RED_DARK || hist == HS_GREEN_DARK) histTransition = true;
+      if(hist == HS_GRAY) histTransition = true;
+      if(g_histFlipBar[i] <= InpRevMaxHistAge) histTransition = true;
+      if(histTransition) qCount++;
+      else StringConcatenate(details, details, "Hist=" + HistStateStr(hist) + " ");
+
+      // Q4
+      bool decelerating = false;
+      bool hasDivergence = false;
+      bool trendIsShort = (g_radarValue[i] < 0);
+
+      if(absPrevRV > 0)
+      {
+         double decel = absPrevRV - absRV;
+         if(decel >= InpRevMinDecel) decelerating = true;
+      }
+
+      if(g_prev2RV[i] != 0)
+      {
+         if(absRV < MathAbs(g_prev2RV[i])) hasDivergence = true;
+      }
+      else
+      {
+         hasDivergence = true;
+      }
+
+      if(decelerating || hasDivergence) qCount++;
+      else StringConcatenate(details, details, "NoDecel ");
+
+      if(qCount < g_revMinQuality)
+      {
+         Print("[REV] ", g_symbol[i], " filtri: ", qCount, "/4 < min ", g_revMinQuality);
+         continue;
+      }
+
+      bool isLong = (g_radarValue[i] < 0);
+      string sym = g_symbol[i];
+
+      if(HasOpenPosition(sym)) continue;
+      // doppia esposizione rimossa
+      if(!SpreadOK(sym)) continue;
+      if(!MarketOpen(sym)) continue;
+
+      int score = -100;
+      score -= (qCount * 25);
+      if(absRV >= 80)      score -= 30;
+      else if(absRV >= 65) score -= 20;
+      else                 score -= 5;
+
+      if(decelerating && absPrevRV > 0)
+      {
+         double decelAmt = absPrevRV - absRV;
+         if(decelAmt >= 15)     score -= 25;
+         else if(decelAmt >= 10) score -= 15;
+      }
+
+      if(g_histFlipBar[i] == 0)      score -= 20;
+      else if(g_histFlipBar[i] == 1) score -= 10;
+
+      if(hist == HS_GRAY) score -= 15;
+
+      candidates[candidateCount] = i;
+      revScores[candidateCount] = score;
+      revQuality[candidateCount] = qCount;
+      candidateCount++;
+
+      Print("[REV] ", sym, " ", (isLong ? "BUY" : "SELL"),
+            " | ", qCount, "/4 | RV=", DoubleToString(g_radarValue[i], 1),
+            " | ADX=", DoubleToString(g_adx[i], 0),
+            " | score=", score);
+   }
+
+   if(candidateCount == 0) return;
+
+   // Sort per score
+   for(int i = 0; i < candidateCount - 1; i++)
+   {
+      for(int j = i + 1; j < candidateCount; j++)
+      {
+         if(revScores[j] < revScores[i])
+         {
+            int tempS = revScores[i]; revScores[i] = revScores[j]; revScores[j] = tempS;
+            int tempC = candidates[i]; candidates[i] = candidates[j]; candidates[j] = tempC;
+            int tempQ = revQuality[i]; revQuality[i] = revQuality[j]; revQuality[j] = tempQ;
+         }
+      }
+   }
+
+   Print("[REV] Candidati: ", candidateCount, " | Best: ", g_symbol[candidates[0]]);
+
+   // Apri trade reversal
+   for(int c = 0; c < candidateCount && openCount < InpMaxConcurrent; c++)
+   {
+      int idx = candidates[c];
+      bool revIsLong = (g_radarValue[idx] < 0);
+      string revSym = g_symbol[idx];
+
+      double revSL = CalculateATR_SL(revSym, revIsLong);
+      double revEntry = revIsLong ? MarketInfo(revSym, MODE_ASK) : MarketInfo(revSym, MODE_BID);
+
+      if(revIsLong && revSL >= revEntry) continue;
+      if(!revIsLong && revSL <= revEntry) continue;
+
+      double ema21 = iMA(revSym, PERIOD_M15, 21, 0, MODE_EMA, PRICE_CLOSE, 0);
+      int revDigits = (int)MarketInfo(revSym, MODE_DIGITS);
+      double revTP = NormalizeDouble(ema21, revDigits);
+
+      double slDist = MathAbs(revEntry - revSL);
+      double tpDist = MathAbs(revTP - revEntry);
+
+      if(tpDist <= 0 || tpDist / slDist < InpMinRR)
+      {
+         tpDist = slDist * 2.0;
+         if(revIsLong) revTP = NormalizeDouble(revEntry + tpDist, revDigits);
+         else          revTP = NormalizeDouble(revEntry - tpDist, revDigits);
+      }
+
+      double revLots = GetLotSize(revSym);
+      if(revLots <= 0) continue;
+
+      //=== AI CONFIRMATION per REVERSAL ===
+      if(InpUseAI)
+      {
+         int revAIConf = GetAIConfirmation(idx, "REV");
+
+         if(revAIConf < 0)
+         {
+            // Errore di connessione - NESSUN FALLBACK, trade saltato
+            g_aiErrors++;
+            g_aiMissedTrades++;
+            g_aiMissedLastSymbol = revSym;
+            g_aiMissedLastModule = 3; // REV
+            Print("============================================");
+            Print("[AI][REV] *** OPPORTUNITA' PERSA! ***");
+            Print("[AI][REV] Trade SALTATO per ERRORE CONNESSIONE: ", revSym, " [REV]");
+            Print("[AI][REV] Motivo: ", g_aiLastError);
+            Print("[AI][REV] Totale opportunita' perse: ", g_aiMissedTrades);
+            Print("============================================");
+            continue;
+         }
+         else if(revAIConf < InpAIMinConf)
+         {
+            Print("[AI][REV] Conf ", revAIConf, "% < min ", InpAIMinConf, "% -> SKIP ", revSym);
+            g_aiReject++;
+            continue;
+         }
+         else
+         {
+            Print("[AI][REV] CONFERMATO ", revAIConf, "% -> procedo ", revSym);
+            g_aiConfirm++;
+         }
+      }
+
+      Print(">>> [REV] ", (revIsLong ? "BUY" : "SELL"), " ", revSym,
+            " | SL: ", DoubleToString(revSL, revDigits),
+            " | TP: ", DoubleToString(revTP, revDigits),
+            " | RV: ", DoubleToString(g_radarValue[idx], 1));
+
+      int ticket = OpenOrder(revSym, revIsLong, revLots, revSL, revTP, "REV");
+      if(ticket > 0)
+      {
+         Print(">> Reversal aperto: #", ticket, " ", revSym);
+         if(InpUseAI) StoreTradeForFeedback(ticket, idx, "REV", revIsLong);
+         openCount++;
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+// |  TRY OPEN TRADE                                                   |
+//+------------------------------------------------------------------+
+bool TryOpenTrade(int idx, int origin, double minRR)
+{
+   bool isLong;
+   if(origin == ORIGIN_BREAKOUT)
+      isLong = (g_histogramState[idx] == HS_GREEN_LIGHT);
+   else
+      isLong = (g_radarType[idx] == RT_LONG);
+
+   string sym = g_symbol[idx];
+   string tag = (origin == ORIGIN_BREAKOUT) ? "BRK" : "STD";
+
+   Print("[TRY] ", sym, " ", tag, " ", (isLong ? "BUY" : "SELL"), " | RV=", DoubleToString(g_radarValue[idx],1), " ADX=", DoubleToString(g_adx[idx],1), " ADR%=", DoubleToString(g_adrPercent[idx],1));
+
+   if(!SpreadOK(sym))        { Print("[TRY] ", sym, " BLOCCATO: spread troppo alto"); return false; }
+   if(!MarketOpen(sym))      { Print("[TRY] ", sym, " BLOCCATO: mercato chiuso"); return false; }
+   if(HasOpenPosition(sym))  { Print("[TRY] ", sym, " BLOCCATO: posizione già aperta"); return false; }
+   // doppia esposizione rimossa
+
+   double entryPrice = isLong ? MarketInfo(sym, MODE_ASK) : MarketInfo(sym, MODE_BID);
+   int digits = (int)MarketInfo(sym, MODE_DIGITS);
+   double point = MarketInfo(sym, MODE_POINT);
+
+   //--- Pip multiplier: broker 5/3 cifre = 10x
+   double pipMult = 1.0;
+   if(digits == 3 || digits == 5) pipMult = 10.0;
+   double pipSize = point * pipMult;
+
+   //--- Distanza minima stop dal broker (stops level + buffer)
+   double stopLevelPips = (double)MarketInfo(sym, MODE_STOPLEVEL);
+   double minSLDistPips = MathMax(stopLevelPips * 2.0, 10.0); // Minimo 10 pip reali
+   double minSLDist = minSLDistPips * pipSize;
+
+   double slPrice = FindFractalSL(sym, isLong);
+   if(isLong && slPrice >= entryPrice)
+   {
+      slPrice = CalculateATR_SL(sym, true);
+      if(slPrice >= entryPrice) { Print("[TRY] ", sym, " BLOCCATO: SL sopra entry (fractal+ATR)"); return false; }
+   }
+   if(!isLong && slPrice <= entryPrice)
+   {
+      slPrice = CalculateATR_SL(sym, false);
+      if(slPrice <= entryPrice) { Print("[TRY] ", sym, " BLOCCATO: SL sotto entry (fractal+ATR)"); return false; }
+   }
+
+   //--- Verifica distanza minima SL dal broker (evita err 130)
+   double slDist = MathAbs(entryPrice - slPrice);
+   if(slDist < minSLDist)
+   {
+      Print("[TRY] ", sym, " SL troppo vicino: ", DoubleToString(slDist/pipSize, 1), " pips < min ", DoubleToString(minSLDistPips, 1), " -> allargo");
+      if(isLong)
+         slPrice = NormalizeDouble(entryPrice - minSLDist, digits);
+      else
+         slPrice = NormalizeDouble(entryPrice + minSLDist, digits);
+   }
+
+   double tpPrice = CalculateTP(sym, entryPrice, slPrice, isLong, idx, minRR);
+   if(tpPrice <= 0) { Print("[TRY] ", sym, " BLOCCATO: TP=0 (pipResidui=", DoubleToString(g_media10gg[idx]-g_pipFatti[idx],1), " media10gg=", DoubleToString(g_media10gg[idx],1), " pipFatti=", DoubleToString(g_pipFatti[idx],1), ")"); return false; }
+
+   double lots = GetLotSize(sym);
+   if(lots <= 0) { Print("[TRY] ", sym, " BLOCCATO: lots=0"); return false; }
+
+   double rr = MathAbs(tpPrice - entryPrice) / MathAbs(entryPrice - slPrice);
+
+   //=== AI CONFIRMATION ===
+   if(InpUseAI)
+   {
+      int aiConf = GetAIConfirmation(idx, tag);
+
+      if(aiConf < 0)
+      {
+         // Errore di connessione - NESSUN FALLBACK, trade saltato
+         g_aiErrors++;
+         g_aiMissedTrades++;
+         g_aiMissedLastSymbol = sym;
+         g_aiMissedLastModule = 1; // STD
+         Print("============================================");
+         Print("[AI] *** OPPORTUNITA' PERSA! ***");
+         Print("[AI] Trade SALTATO per ERRORE CONNESSIONE: ", sym, " [", tag, "]");
+         Print("[AI] Motivo: ", g_aiLastError);
+         Print("[AI] Totale opportunita' perse per timeout: ", g_aiMissedTrades);
+         Print("[AI] Se il server era in sleep, considera warm-up ping");
+         Print("[AI] Warm-up status: ", (g_warmupOK ? "OK" : "MAI CONNESSO"),
+               " | Ping OK: ", g_warmupTotalOK, " | Fail: ", g_warmupTotalFail);
+         Print("============================================");
+         return false;
+      }
+      else if(aiConf < InpAIMinConf)
+      {
+         Print("[AI] Confidenza ", aiConf, "% < min ", InpAIMinConf, "% -> SKIP ", sym);
+         g_aiReject++;
+         return false;
+      }
+      else
+      {
+         Print("[AI] CONFERMATO ", aiConf, "% >= ", InpAIMinConf, "% -> procedo ", sym);
+         g_aiConfirm++;
+      }
+   }
+
+   Print(">>> [", tag, "] ", (isLong ? "BUY" : "SELL"), " ", sym,
+         " | Entry: ", DoubleToString(entryPrice, digits),
+         " | SL: ", DoubleToString(slPrice, digits),
+         " | TP: ", DoubleToString(tpPrice, digits),
+         " | R:R: ", DoubleToString(rr, 2),
+         " | RV: ", DoubleToString(g_radarValue[idx], 1));
+
+   int ticket = OpenOrder(sym, isLong, lots, slPrice, tpPrice, tag);
+   if(ticket > 0)
+   {
+      Print("[", tag, "] Ordine aperto: #", ticket, " ", sym);
+      if(InpUseAI) StoreTradeForFeedback(ticket, idx, tag, isLong);
+      return true;
+   }
+   return false;
+}
+
+//+------------------------------------------------------------------+
+// |  SORT CANDIDATES                                                  |
+//+------------------------------------------------------------------+
+void SortCandidates(int &candidates[], int count)
+{
+   for(int i = 0; i < count - 1; i++)
+   {
+      for(int j = i + 1; j < count; j++)
+      {
+         if(g_score[candidates[j]] < g_score[candidates[i]])
+         {
+            int temp = candidates[i];
+            candidates[i] = candidates[j];
+            candidates[j] = temp;
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+// |  OPEN ORDER - ECN                                                 |
+//+------------------------------------------------------------------+
+int OpenOrder(string sym, bool isLong, double lots, double sl, double tp, string tag)
+{
+   int digits = (int)MarketInfo(sym, MODE_DIGITS);
+   double point = MarketInfo(sym, MODE_POINT);
+   int cmd = isLong ? OP_BUY : OP_SELL;
+   double price = NormalizeDouble(isLong ? MarketInfo(sym, MODE_ASK) : MarketInfo(sym, MODE_BID), digits);
+   string comment = "PRP_" + tag + "_" + TimeToStr(TimeCurrent(), TIME_DATE | TIME_MINUTES);
+
+   //--- Pip multiplier per broker 5/3 cifre
+   double pipMult = 1.0;
+   if(digits == 3 || digits == 5) pipMult = 10.0;
+   double pipSize = point * pipMult;
+
+   //--- Verifica distanza minima SL/TP in PIP reali
+   double stopLevelPips = (double)MarketInfo(sym, MODE_STOPLEVEL);
+   double minDistPips = MathMax(stopLevelPips * 1.2, 5.0); // Almeno 5 pip
+   double minDist = minDistPips * pipSize;
+
+   double slDist = MathAbs(price - sl);
+   double tpDist = MathAbs(tp - price);
+
+   if(slDist < minDist || tpDist < minDist)
+   {
+      Print("[ECN] RIFIUTATO: ", sym, " SL dist=", DoubleToString(slDist/pipSize,1),
+            " TP dist=", DoubleToString(tpDist/pipSize,1), " pips | min richiesto=", DoubleToString(minDistPips,1));
+      return -1;
+   }
+
+   int ticket = OrderSend(sym, cmd, lots, price, InpMaxSlippage,
+                           0, 0, comment, InpMagicNumber, 0,
+                           isLong ? clrLime : clrRed);
+
+   if(ticket < 0)
+   {
+      Print("OrderSend FALLITO: ", sym, " | Err: ", GetLastError());
+      return -1;
+   }
+
+   if(!OrderSelect(ticket, SELECT_BY_TICKET))
+      return ticket;
+
+   double slNorm = NormalizeDouble(sl, digits);
+   double tpNorm = NormalizeDouble(tp, digits);
+
+   Sleep(200);
+   RefreshRates();
+
+   if(!OrderModify(ticket, OrderOpenPrice(), slNorm, tpNorm, 0, clrBlue))
+   {
+      Sleep(500);
+      RefreshRates();
+      if(!OrderModify(ticket, OrderOpenPrice(), slNorm, tpNorm, 0, clrBlue))
+         Print("[ECN] OrderModify retry fallito: #", ticket, " err ", GetLastError());
+   }
+
+   return ticket;
+}
+
+//+------------------------------------------------------------------+
+// |  MANAGE OPEN TRADES                                               |
+//+------------------------------------------------------------------+
+void ManageOpenTrades()
+{
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(OrderMagicNumber() != InpMagicNumber) continue;
+      if(OrderType() > OP_SELL) continue;
+
+      string sym    = OrderSymbol();
+      int    ticket = OrderTicket();
+      bool   isLong = (OrderType() == OP_BUY);
+      double entry  = OrderOpenPrice();
+      double curSL  = OrderStopLoss();
+      double curTP  = OrderTakeProfit();
+      int    digits = (int)MarketInfo(sym, MODE_DIGITS);
+      double point  = MarketInfo(sym, MODE_POINT);
+      if(point <= 0) continue;
+
+      double stopLevel = MarketInfo(sym, MODE_STOPLEVEL) * point;
+      double bid = MarketInfo(sym, MODE_BID);
+      double ask = MarketInfo(sym, MODE_ASK);
+
+      double pipMult = 1.0;
+      if(digits == 3 || digits == 5) pipMult = 10.0;
+
+      double profitPips;
+      if(isLong) profitPips = (bid - entry) / point / pipMult;
+      else       profitPips = (entry - ask) / point / pipMult;
+
+      double R = MathAbs(entry - curSL);
+
+      //=== BREAK-EVEN ===
+      if(profitPips >= InpBEPips && R > 0)
+      {
+         double bePipDist = InpBEProfit * point * pipMult;
+         double beSL;
+
+         if(isLong) beSL = NormalizeDouble(entry + bePipDist, digits);
+         else       beSL = NormalizeDouble(entry - bePipDist, digits);
+
+         bool needBE = false;
+         if(isLong  && (curSL < beSL || curSL == 0)) needBE = true;
+         if(!isLong && (curSL > beSL || curSL == 0)) needBE = true;
+
+         if(needBE)
+         {
+            if(OrderModify(ticket, entry, beSL, curTP, 0, clrGold))
+            {
+               Print("[BE] ", sym, " #", ticket, " SL -> entry+", InpBEProfit, " pip");
+               curSL = beSL;
+               R = MathAbs(entry - curSL);
+            }
+         }
+      }
+
+      //=== TRAILING EMA21 + ATR ===
+      if(R <= 0) continue;
+
+      double profitDistance = 0;
+      double originalR = MathAbs(entry - curSL);
+
+      if(isLong)
+         profitDistance = bid - entry;
+      else
+         profitDistance = entry - ask;
+
+      if(originalR <= 0) continue;
+
+      double currentR = profitDistance / originalR;
+
+      if(currentR >= InpTrailActivate)
+      {
+         double ema = iMA(sym, PERIOD_M15, 21, 0, MODE_EMA, PRICE_CLOSE, 0);
+         double atr = iATR(sym, PERIOD_M15, InpATR_Period, 0);
+
+         if(ema > 0 && atr > 0)
+         {
+            double newSL;
+
+            if(isLong)
+            {
+               newSL = NormalizeDouble(ema - (InpTrailATRMult * atr), digits);
+               if(newSL > curSL && (bid - newSL) > (stopLevel + point))
+               {
+                  if(OrderModify(ticket, entry, newSL, curTP, 0, clrGreen))
+                     Print("[TRAIL] ", sym, " #", ticket, " BUY SL -> ", DoubleToString(newSL, digits));
+               }
+            }
+            else
+            {
+               newSL = NormalizeDouble(ema + (InpTrailATRMult * atr), digits);
+               if(newSL < curSL && (newSL - ask) > (stopLevel + point))
+               {
+                  if(OrderModify(ticket, entry, newSL, curTP, 0, clrRed))
+                     Print("[TRAIL] ", sym, " #", ticket, " SELL SL -> ", DoubleToString(newSL, digits));
+               }
+            }
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+// |  EARLY EXIT                                                       |
+//+------------------------------------------------------------------+
+void CheckEarlyExit()
+{
+   if(g_dataCount == 0) return;
+
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(OrderMagicNumber() != InpMagicNumber) continue;
+      if(OrderType() > OP_SELL) continue;
+
+      string sym  = OrderSymbol();
+      bool isLong = (OrderType() == OP_BUY);
+      int dataIdx = FindSymbolIndex(NormSym(sym));
+      if(dataIdx < 0) continue;
+
+      string ordComment = OrderComment();
+      if(StringFind(ordComment, "PRP_TEST") >= 0) continue;
+
+      bool shouldClose = false;
+
+      if(isLong)
+      {
+         if(g_histogramState[dataIdx] == HS_RED_LIGHT || g_histogramState[dataIdx] == HS_RED_DARK)
+            shouldClose = true;
+      }
+      else
+      {
+         if(g_histogramState[dataIdx] == HS_GREEN_LIGHT || g_histogramState[dataIdx] == HS_GREEN_DARK)
+            shouldClose = true;
+      }
+
+      if(shouldClose) CloseOrder(OrderTicket());
+   }
+}
+
+//+------------------------------------------------------------------+
+// |  FRIDAY CLOSE - 3 FASI                                            |
+//+------------------------------------------------------------------+
+void CheckForceClose()
+{
+   int italyDow = GetItalyDayOfWeek();
+   int h = GetItalyHour();
+   int m = (int)TimeMinute(TimeCurrent());
+
+   if(italyDow == 6 && CountOpenPositions() > 0)
+   {
+      Print("[WEEKEND] FORCE CLOSE - Sabato");
+      CloseAllOrders();
+      return;
+   }
+
+   if(italyDow != 5) return;
+   if(CountOpenPositions() == 0) return;
+
+   // Fase 1: chiudi profitto
+   if(IsFridayProfitClose() && !IsFridayLossClose())
+   {
+      for(int i = OrdersTotal() - 1; i >= 0; i--)
+      {
+         if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+         if(OrderMagicNumber() != InpMagicNumber) continue;
+         if(OrderType() > OP_SELL) continue;
+
+         double pnl = OrderProfit() + OrderSwap() + OrderCommission();
+         if(pnl >= 0)
+         {
+            Print("[VEN FASE1] Chiudo profitto: #", OrderTicket());
+            CloseOrder(OrderTicket());
+         }
+      }
+   }
+
+   // Fase 2: chiudi perdita
+   if(IsFridayLossClose() && !IsFridayEvening())
+   {
+      for(int i = OrdersTotal() - 1; i >= 0; i--)
+      {
+         if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+         if(OrderMagicNumber() != InpMagicNumber) continue;
+         if(OrderType() > OP_SELL) continue;
+
+         double pnl = OrderProfit() + OrderSwap() + OrderCommission();
+         if(pnl < 0)
+         {
+            Print("[VEN FASE2] Chiudo perdita: #", OrderTicket());
+            CloseOrder(OrderTicket());
+         }
+      }
+   }
+
+   // Fase 3: forza chiusura tutto
+   if(IsFridayEvening())
+   {
+      Print("[VEN FASE3] FORCE CLOSE - ", PadZero(h), ":", PadZero(m), " Italia");
+      CloseAllOrders();
+   }
+}
+
+//+------------------------------------------------------------------+
+// |  CLOSE ALL / CLOSE SINGLE                                         |
+//+------------------------------------------------------------------+
+void CloseAllOrders()
+{
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(OrderMagicNumber() != InpMagicNumber) continue;
+      if(OrderType() <= OP_SELL) CloseOrder(OrderTicket());
+      else { if(!OrderDelete(OrderTicket())) Print("[CLOSE] OrderDelete fallito: err ", GetLastError()); }
+   }
+}
+
+bool CloseOrder(int ticket)
+{
+   if(!OrderSelect(ticket, SELECT_BY_TICKET)) return false;
+
+   string sym    = OrderSymbol();
+   int    digits = (int)MarketInfo(sym, MODE_DIGITS);
+
+   if(OrderType() == OP_BUY)
+   {
+      double price = NormalizeDouble(MarketInfo(sym, MODE_BID), digits);
+      if(OrderClose(ticket, OrderLots(), price, InpMaxSlippage, clrOrange))
+      {
+         Print("Chiuso BUY #", ticket, " ", sym, " | P&L: ", DoubleToString(OrderProfit(), 2));
+         LogTradeToCSV(ticket);
+         return true;
+      }
+   }
+   else if(OrderType() == OP_SELL)
+   {
+      double price = NormalizeDouble(MarketInfo(sym, MODE_ASK), digits);
+      if(OrderClose(ticket, OrderLots(), price, InpMaxSlippage, clrOrange))
+      {
+         Print("Chiuso SELL #", ticket, " ", sym, " | P&L: ", DoubleToString(OrderProfit(), 2));
+         LogTradeToCSV(ticket);
+         return true;
+      }
+   }
+
+   Print("Chiusura fallita #", ticket, " | Err: ", GetLastError());
+   return false;
+}
+
+//+------------------------------------------------------------------+
+// |  DAILY STATS                                                      |
+//+------------------------------------------------------------------+
+void ResetDailyStats()
+{
+   int today = TimeDay(TimeCurrent());
+   if(today != g_currentDay)
+   {
+      g_currentDay        = today;
+      g_dailyLosses       = 0;
+      g_dailyWins         = 0;
+      g_dailyWinAmount    = 0;
+      g_dailyLossAmount   = 0;
+      g_dailyStartBalance = AccountBalance();
+      g_dailyStopped      = false;
+      g_consecutiveLosses = 0;
+      Print("Nuovo giorno | Balance: ", DoubleToString(g_dailyStartBalance, 2));
+   }
+}
+
+void UpdateTradeResults()
+{
+   datetime dayStart = StringToTime(TimeToString(TimeCurrent(), TIME_DATE));
+   int losses = 0, wins = 0, consecLoss = 0, maxConsecLoss = 0;
+   double winAmount = 0, lossAmount = 0;
+
+   for(int i = OrdersHistoryTotal() - 1; i >= 0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_HISTORY)) continue;
+      if(OrderMagicNumber() != InpMagicNumber) continue;
+      if(OrderCloseTime() < dayStart) break;
+      if(OrderType() > OP_SELL) continue;
+
+      double pnl = OrderProfit() + OrderSwap() + OrderCommission();
+      if(pnl < 0) { losses++; consecLoss++; if(consecLoss > maxConsecLoss) maxConsecLoss = consecLoss; lossAmount += MathAbs(pnl); }
+      else { wins++; consecLoss = 0; winAmount += pnl; }
+   }
+
+   g_dailyLosses       = losses;
+   g_dailyWins         = wins;
+   g_dailyWinAmount    = winAmount;
+   g_dailyLossAmount   = lossAmount;
+   g_consecutiveLosses = maxConsecLoss;
+}
+
+bool CanTrade()
+{
+   if(g_dailyStopped) return false;
+
+   //--- Stop consecutivi (hard limit di sicurezza)
+   if(g_consecutiveLosses >= InpMaxConsecLoss)
+   {
+      Print("Stop: ", g_consecutiveLosses, " loss consecutivi");
+      g_dailyStopped = true;
+      return false;
+   }
+
+   //=== NUOVO SISTEMA: bilancio vincite vs perdite ===
+   // Non si ferma dopo N perdite — si ferma quando le perdite superano le vincite
+   // di un fattore configurabile (max_daily_loss diventa il "loss ratio" max)
+   //
+   // Esempi con max_daily_loss = 3 (significa: perdite possono essere 3x le vincite):
+   //   - Vinto 1.00€, perso 0.30€ → ratio 0.30 → OK continua
+   //   - Vinto 0.50€, perso 1.50€ → ratio 3.0  → STOP (perdite = 3x vincite)
+   //   - Vinto 2.00€, perso 1.50€ → ratio 0.75 → OK continua (le vincite coprono)
+   //   - Perso 1.50€, vinto 0€    → ratio ∞    → STOP se netto sotto soglia
+   //
+   // Inoltre: se il netto giornaliero (vincite - perdite) scende sotto
+   // il -X% del balance → STOP (protezione assoluta)
+
+   double dailyPnL      = g_dailyWinAmount - g_dailyLossAmount;
+   double dailyPnLPct   = (g_dailyStartBalance > 0) ? (dailyPnL / g_dailyStartBalance) * 100.0 : 0;
+
+   //--- Protezione 1: limite netto giornaliero (es: -3% del balance)
+   //    InpMaxDailyLoss ora = max drawdown % prima di fermarsi
+   if(g_dailyLosses > 0 && dailyPnLPct <= -(double)InpMaxDailyLoss)
+   {
+      Print("Stop drawdown: ", DoubleToString(dailyPnLPct, 2), "% (limite -", InpMaxDailyLoss, "%)");
+      Print("  Vincite: ", DoubleToString(g_dailyWinAmount, 2), "€ (", g_dailyWins, " trade)");
+      Print("  Perdite: ", DoubleToString(g_dailyLossAmount, 2), "€ (", g_dailyLosses, " trade)");
+      g_dailyStopped = true;
+      return false;
+   }
+
+   //--- Protezione 2: se non hai ancora vinto niente, stop dopo 3 perdite
+   //    (evita di perdere subito all'inizio della giornata)
+   if(g_dailyWins == 0 && g_dailyLosses >= 3)
+   {
+      Print("Stop: ", g_dailyLosses, " perse senza vincite (", DoubleToString(g_dailyLossAmount, 2), "€)");
+      g_dailyStopped = true;
+      return false;
+   }
+
+   //--- Protezione 3: perdite superano le vincite per troppo margine
+   //    Se le perdite sono più del triplo delle vincite → fermati
+   if(g_dailyWinAmount > 0 && g_dailyLossAmount > g_dailyWinAmount * 3.0)
+   {
+      Print("Stop ratio: perse ", DoubleToString(g_dailyLossAmount, 2), "€ > 3x vinte ", DoubleToString(g_dailyWinAmount, 2), "€");
+      g_dailyStopped = true;
+      return false;
+   }
+
+   //--- Target giornaliero raggiunto
+   if(dailyPnLPct >= InpMaxDailyProfit)
+   {
+      Print("Target raggiunto: +", DoubleToString(dailyPnLPct, 2), "%");
+      Print("  Vincite: ", DoubleToString(g_dailyWinAmount, 2), "€ (", g_dailyWins, " trade)");
+      Print("  Perdite: ", DoubleToString(g_dailyLossAmount, 2), "€ (", g_dailyLosses, " trade)");
+      g_dailyStopped = true;
+      return false;
+   }
+
+   if(IsWeekend() || IsFridayEvening()) return false;
+
+   return true;
+}
+
+//+------------------------------------------------------------------+
+// |  DASHBOARD                                                        |
+//+------------------------------------------------------------------+
+#define DASH_LINES  30
+#define DASH_PREFIX "PRP_D_"
+
+void ShowDashboard()
+{
+   string lines[DASH_LINES];
+   int line = 0;
+
+   lines[line++] = "===================================";
+   lines[line++] = "  PROFIT RADAR PRO v" + VERSION_STR;
+   lines[line++] = "  [" + AggressivenessStr() + "]";
+   lines[line++] = "===================================";
+
+   int h = GetItalyHour();
+   int m = (int)TimeMinute(TimeCurrent());
+   int dow = GetItalyDayOfWeek();
+   string dayName = "";
+   if(dow == 0) dayName = "DOM";
+   else if(dow == 1) dayName = "LUN";
+   else if(dow == 2) dayName = "MAR";
+   else if(dow == 3) dayName = "MER";
+   else if(dow == 4) dayName = "GIO";
+   else if(dow == 5) dayName = "VEN";
+   else if(dow == 6) dayName = "SAB";
+
+   int slot = GetTradeSlot();
+   string slotStr = (slot == 1) ? ">> ATTIVO" : "|| CHIUSO";
+   lines[line++] = dayName + " " + PadZero(h) + ":" + PadZero(m) + " | " + slotStr;
+
+   lines[line++] = "Balance: " + DoubleToString(AccountBalance(), 2) + " EUR";
+   lines[line++] = "Equity:  " + DoubleToString(AccountEquity(), 2) + " EUR";
+   lines[line++] = "Trade: " + IntegerToString(CountOpenPositions()) + "/" + IntegerToString(InpMaxConcurrent) +
+                   " | Lotto: " + DoubleToString(InpFixedLots, 2);
+
+   double dailyPnL = AccountBalance() - g_dailyStartBalance;
+   string sign = (dailyPnL >= 0) ? "+" : "";
+   lines[line++] = "PnL oggi: " + sign + DoubleToString(dailyPnL, 2) + " EUR";
+   lines[line++] = "W/L: " + IntegerToString(g_dailyWins) + "/" + IntegerToString(g_dailyLosses) +
+                   " (+" + DoubleToString(g_dailyWinAmount, 2) + "/-" + DoubleToString(g_dailyLossAmount, 2) + " EUR)" +
+                   " | Cons.L: " + IntegerToString(g_consecutiveLosses);
+
+   lines[line++] = "-----------------------------------";
+   lines[line++] = "STD:" + IntegerToString(g_stdMinQuality) + "/4 | BRK:" +
+                   IntegerToString(g_brkMinQuality) + "/8 | REV:" +
+                   IntegerToString(g_revMinQuality) + "/4";
+   lines[line++] = "Data: " + g_activeDataSource + " | Off: " + IntegerToString(InpTimeOffset) + "h";
+
+   if(dow == 5 && h >= 15)
+      lines[line++] = "!! VENERDI: NO NUOVI TRADE !!";
+
+   //--- AI status
+   if(InpUseAI)
+   {
+      lines[line++] = "AI: OBBLIGATORIA | Conf: " + IntegerToString(g_aiConfirm) +
+                      "/" + IntegerToString(g_aiCalls) +
+                      " | Rej: " + IntegerToString(g_aiReject) +
+                      " | Err: " + IntegerToString(g_aiErrors);
+
+      //--- Warm-up status
+      string warmupStr = (g_warmupOK ? "OK" : "OFF");
+      if(g_warmupLastTime > 0)
+      {
+         int secsAgo = (int)(TimeCurrent() - g_warmupLastTime);
+         warmupStr = warmupStr + " " + IntegerToString(secsAgo / 60) + "m fa";
+      }
+      lines[line++] = "Warmup: " + warmupStr +
+                      " | OK:" + IntegerToString(g_warmupTotalOK) +
+                      " Fail:" + IntegerToString(g_warmupTotalFail);
+
+      //--- Trade persi per timeout
+      if(g_aiMissedTrades > 0)
+         lines[line++] = "!! TRADE PERSI: " + IntegerToString(g_aiMissedTrades) +
+                         " !! Ultimo: " + g_aiMissedLastSymbol;
+
+      //--- A/B Test GPT
+      if(g_abGptCalls > 0)
+         lines[line++] = "AB: " + IntegerToString(g_abGptCalls) + " test" +
+                         " | LG/GPT: " + IntegerToString(g_abGptAgree) + "/" + IntegerToString(g_abGptDisagree) +
+                         " agree";
+
+      lines[line++] = "AI Feedback: " + IntegerToString(g_fbSentCount) +
+                      " inviati | " + IntegerToString(g_fbCount) + " track";
+      if(g_aiLastSignal != "")
+         lines[line++] = "AI Last: " + g_aiLastSignal + " " + IntegerToString(g_aiLastConf) + "%";
+   }
+   else
+   {
+      lines[line++] = "AI: OFF";
+   }
+
+   if(g_dailyStopped) lines[line++] = "!! DAILY STOP ATTIVO !!";
+   if(!g_dataValidated) lines[line++] = "!! DATI NON VALIDATI !!";
+   if(g_dataCount > 0) lines[line++] = "Cross: " + IntegerToString(g_dataCount) + "/28" +
+                   (g_dataValidated ? " (" + IntegerToString(g_nonGrayCount) + " attivi)" : "");
+
+   lines[line++] = "===================================";
+
+   if(InpDashBg)
+   {
+      string bgName = DASH_PREFIX + "BG";
+      if(ObjectFind(0, bgName) < 0)
+      {
+         ObjectCreate(0, bgName, OBJ_RECTANGLE_LABEL, 0, 0, 0);
+         ObjectSetInteger(0, bgName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+         ObjectSetInteger(0, bgName, OBJPROP_BGCOLOR, InpDashBgColor);
+         ObjectSetInteger(0, bgName, OBJPROP_BORDER_TYPE, BORDER_FLAT);
+         ObjectSetInteger(0, bgName, OBJPROP_BORDER_COLOR, clrDarkSlateGray);
+         ObjectSetInteger(0, bgName, OBJPROP_BACK, false);
+      }
+      ObjectSetInteger(0, bgName, OBJPROP_XDISTANCE, InpDashX - 4);
+      ObjectSetInteger(0, bgName, OBJPROP_YDISTANCE, InpDashY - 4);
+      ObjectSetInteger(0, bgName, OBJPROP_XSIZE, 300);
+      ObjectSetInteger(0, bgName, OBJPROP_YSIZE, line * (InpDashFontSize + 5) + 10);
+   }
+
+   int lineH = InpDashFontSize + 5;
+   for(int li = 0; li < line; li++)
+   {
+      string objName = DASH_PREFIX + IntegerToString(li);
+      if(ObjectFind(0, objName) < 0)
+      {
+         ObjectCreate(0, objName, OBJ_LABEL, 0, 0, 0);
+         ObjectSetInteger(0, objName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+         ObjectSetInteger(0, objName, OBJPROP_FONTSIZE, InpDashFontSize);
+         ObjectSetString(0, objName, OBJPROP_FONT, "Consolas");
+         ObjectSetInteger(0, objName, OBJPROP_BACK, false);
+      }
+      ObjectSetInteger(0, objName, OBJPROP_XDISTANCE, InpDashX);
+      ObjectSetInteger(0, objName, OBJPROP_YDISTANCE, InpDashY + li * lineH);
+      ObjectSetString(0, objName, OBJPROP_TEXT, lines[li]);
+      ObjectSetInteger(0, objName, OBJPROP_COLOR, InpDashColor);
+   }
+
+   for(int li = line; li < DASH_LINES + 5; li++)
+      ObjectDelete(0, DASH_PREFIX + IntegerToString(li));
+
+   ChartRedraw();
+}
+
+void DashboardDelete()
+{
+   ObjectDelete(0, DASH_PREFIX + "BG");
+   for(int i = 0; i < DASH_LINES + 10; i++)
+      ObjectDelete(0, DASH_PREFIX + IntegerToString(i));
+   ChartRedraw();
+}
+
+//+------------------------------------------------------------------+
+// |  HELPERS                                                          |
+//+------------------------------------------------------------------+
+string PadZero(int n)
+{
+   if(n < 10) return "0" + IntegerToString(n);
+   return IntegerToString(n);
+}
+
+int FindSymbolIndex(string sym)
+{
+   string norm = NormSym(sym);
+   for(int i = 0; i < g_dataCount; i++)
+      if(NormSym(g_symbol[i]) == norm) return i;
+   return -1;
+}
+
+string RXStr(int rxType, int rxAge, bool rxPresent)
+{
+   if(!rxPresent) return "---";
+   return ((rxType == RX_NEW_H) ? "NEW-H" : "NEW-L") + IntegerToString(rxAge);
+}
+
+string HistStateStr(int hs)
+{
+   switch(hs)
+   {
+      case HS_GREEN_LIGHT: return "GREEN_LIGHT";
+      case HS_GREEN_DARK:  return "GREEN_DARK";
+      case HS_RED_LIGHT:   return "RED_LIGHT";
+      case HS_RED_DARK:    return "RED_DARK";
+      case HS_GRAY:        return "GRAY";
+      default:             return "UNKNOWN";
+   }
+}
+
+string RadarTypeStr(int rt)
+{
+   switch(rt)
+   {
+      case RT_LONG:    return "LONG";
+      case RT_SHORT:   return "SHORT";
+      case RT_RISE:    return "RISE";
+      case RT_FALL:    return "FALL";
+      default:         return "UNKNOWN";
+   }
+}
+
+string ErrDesc(int err)
+{
+   switch(err)
+   {
+      case 0:    return "Nessun errore";
+      case 128:  return "Trade timeout";
+      case 129:  return "Prezzo non valido";
+      case 130:  return "Stops non validi";
+      case 131:  return "Volume non valido";
+      case 132:  return "Mercato chiuso";
+      case 134:  return "Fondi insufficienti";
+      case 135:  return "Prezzo cambiato";
+      case 138:  return "Requote";
+      case 146:  return "Contesto occupato";
+      default:   return "Errore " + IntegerToString(err);
+   }
+}
+
+//+------------------------------------------------------------------+
+// |  AI WARMUP PING — Mantiene il server Render.com attivo            |
+// |  Chiama /health ogni 10 minuti via WebRequest GET                 |
+// |  Render free tier va in sleep dopo 15 min di inattivita'          |
+// |  Questo ping previene il cold start (che puo' durare 30-50 sec)   |
+//+------------------------------------------------------------------+
+void AIWarmupPing()
+{
+   //--- Costruisci URL /health dall'URL /predict
+   string healthUrl = InpAIUrl;
+   StringReplace(healthUrl, "/predict", "/health");
+
+   string headers = "Content-Type: application/json\r\n";
+   char postData[];       // vuoto per GET
+   char result[];
+   string resultHeaders;
+
+   Print("[WARMUP] Ping ", healthUrl, " ...");
+
+   int res = WebRequest("GET", healthUrl, headers, 3000, postData, result, resultHeaders);
+
+   if(res == -1)
+   {
+      int err = GetLastError();
+      g_warmupTotalFail++;
+      g_warmupOK = false;
+      Print("[WARMUP] FALLITO! err=", err, " (", ErrDesc(err), ")");
+      Print("[WARMUP] Verifica: Strumenti > Opzioni > Expert Advisors > Allow WebRequest");
+      Print("[WARMUP] Aggiungi: ", healthUrl);
+   }
+   else
+   {
+      //--- Converti risposta da byte array a stringa
+      string respStr = "";
+      int resultLen = ArraySize(result);
+      for(int i = 0; i < resultLen; i++)
+         respStr += CharToString(result[i]);
+
+      g_warmupOK = true;
+      g_warmupLastTime = TimeCurrent();
+      g_warmupTotalOK++;
+
+      //--- Parse status per conferma
+      int posStatus = StringFind(respStr, "\"status\"");
+      if(posStatus >= 0)
+      {
+         string statusSnippet = StringSubstr(respStr, posStatus, 30);
+         if(StringFind(statusSnippet, "ok") >= 0)
+            Print("[WARMUP] OK! Server attivo (ping #", g_warmupTotalOK, ")");
+         else
+            Print("[WARMUP] Risposta strana: ", StringSubstr(respStr, 0, 80));
+      }
+      else
+      {
+         Print("[WARMUP] Risposta ricevuta (", resultLen, " bytes)");
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+// |  SYNC WITH SERVER — Manda stats + legge config remota            |
+// |  Chiamato ogni candela M15                                       |
+// |  L'EA manda balance, equity, AI stats, trade aperti...           |
+// |  Il server risponde con la config aggiornata dalla dashboard     |
+//+------------------------------------------------------------------+
+void SyncWithServer()
+{
+   //--- Costruisci URL /ea_status
+   string syncUrl = InpAIUrl;
+   StringReplace(syncUrl, "/predict", "/ea_status");
+
+   Print("[SYNC] Inizio sync verso ", syncUrl, " ...");
+
+   //--- Prepara JSON con tutti i dati live
+   double dailyPnL = AccountBalance() - g_dailyStartBalance;
+
+   string json = "{";
+   json += "\"balance\":" + DoubleToString(AccountBalance(), 2) + ",";
+   json += "\"equity\":" + DoubleToString(AccountEquity(), 2) + ",";
+   json += "\"open_trades\":" + IntegerToString(CountOpenPositions()) + ",";
+   json += "\"daily_pnl\":" + DoubleToString(dailyPnL, 2) + ",";
+   json += "\"daily_wins\":" + IntegerToString(g_dailyWins) + ",";
+   json += "\"daily_losses\":" + IntegerToString(g_dailyLosses) + ",";
+   json += "\"daily_win_amount\":" + DoubleToString(g_dailyWinAmount, 2) + ",";
+   json += "\"daily_loss_amount\":" + DoubleToString(g_dailyLossAmount, 2) + ",";
+   json += "\"consecutive_losses\":" + IntegerToString(g_consecutiveLosses) + ",";
+   json += "\"ai_calls\":" + IntegerToString(g_aiCalls) + ",";
+   json += "\"ai_confirm\":" + IntegerToString(g_aiConfirm) + ",";
+   json += "\"ai_reject\":" + IntegerToString(g_aiReject) + ",";
+   json += "\"ai_errors\":" + IntegerToString(g_aiErrors) + ",";
+   json += "\"ai_missed_trades\":" + IntegerToString(g_aiMissedTrades) + ",";
+   json += "\"warmup_ok\":" + (g_warmupOK ? "true" : "false") + ",";
+   json += "\"warmup_last\":\"" + TimeToString(g_warmupLastTime, TIME_DATE | TIME_MINUTES) + "\",";
+   json += "\"data_source\":\"" + g_activeDataSource + "\",";
+   json += "\"cross_active\":" + IntegerToString(g_nonGrayCount) + ",";
+   json += "\"cross_total\":" + IntegerToString(g_dataCount) + ",";
+   json += "\"daily_stopped\":" + (g_dailyStopped ? "true" : "false") + ",";
+   json += "\"ea_version\":\"" + VERSION_STR + "\"";
+   json += "}";
+
+   //--- Invia
+   string headers = "Content-Type: application/json\r\n";
+   char postData[];
+   int len = StringLen(json);
+   ArrayResize(postData, len);
+   for(int i = 0; i < len; i++)
+      postData[i] = (char)StringGetCharacter(json, i);
+
+   char result[];
+   string resultHeaders;
+
+   int res = WebRequest("POST", syncUrl, headers, 8000, postData, result, resultHeaders);
+
+   if(res == -1)
+   {
+      int err = GetLastError();
+      Print("[SYNC] ERRORE WebRequest /ea_status: err=", err, " (", ErrDesc(err), ")");
+      Print("[SYNC] URL: ", syncUrl);
+      Print("[SYNC] Verifica: Strumenti > Opzioni > Expert Advisors > Allow WebRequest");
+      Print("[SYNC] Aggiungi: ", syncUrl);
+      return;
+   }
+
+   //--- Parse risposta per config remota
+   string respStr = "";
+   int resultLen = ArraySize(result);
+   for(int i = 0; i < resultLen; i++)
+      respStr += CharToString(result[i]);
+
+   int cfgPos = StringFind(respStr, "\"config\"");
+   if(cfgPos < 0)
+   {
+      Print("[SYNC] Risposta senza 'config': ", StringSubstr(respStr, 0, 80));
+      return;
+   }
+
+   g_remoteConfigLoaded = true;
+   static int syncCount = 0;
+   syncCount++;
+   Print("[SYNC] ✅ OK! EA status sincronizzato (sync #", syncCount, ")");
+
+   //--- Estrai aggressiveness
+   int aggrPos = StringFind(respStr, "\"aggressiveness\"", cfgPos);
+   if(aggrPos >= 0)
+   {
+      int colonP = StringFind(respStr, ":", aggrPos);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 10; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newAggr = (int)StringToDouble(numStr);
+            if(newAggr >= 1 && newAggr <= 3 && newAggr != InpAggressiveness)
+            {
+               InpAggressiveness = newAggr;
+               ApplyAggressiveness();
+               Print("[SYNC] Aggressivita' cambiata da dashboard: ", newAggr);
+            }
+         }
+      }
+   }
+
+   //--- Estrai AI min conf
+   int confPos = StringFind(respStr, "\"ai_min_conf\"", cfgPos);
+   if(confPos >= 0)
+   {
+      int colonP = StringFind(respStr, ":", confPos);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 10; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newConf = (int)StringToDouble(numStr);
+            if(newConf >= 50 && newConf <= 95 && newConf != InpAIMinConf)
+            {
+               InpAIMinConf = newConf;
+               Print("[SYNC] AI confidenza minima: ", newConf, "%");
+            }
+         }
+      }
+   }
+
+   //--- Estrai use_ai
+   int useAiPos = StringFind(respStr, "\"use_ai\"", cfgPos);
+   if(useAiPos >= 0)
+   {
+      int colonP = StringFind(respStr, ":", useAiPos);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newUseAI = (StringFind(valStr, "true") >= 0);
+         if(newUseAI != InpUseAI)
+         {
+            InpUseAI = newUseAI;
+            Print("[SYNC] AI ", (newUseAI ? "ATTIVATA" : "DISATTIVATA"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai reversal_on
+   int revPos = StringFind(respStr, "\"reversal_on\"", cfgPos);
+   if(revPos >= 0)
+   {
+      int colonP = StringFind(respStr, ":", revPos);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newRev = (StringFind(valStr, "true") >= 0);
+         if(newRev != InpReversalOn)
+         {
+            InpReversalOn = newRev;
+            Print("[SYNC] Reversal ", (newRev ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai breakout_on
+   int brkPos = StringFind(respStr, "\"breakout_on\"", cfgPos);
+   if(brkPos >= 0)
+   {
+      int colonP = StringFind(respStr, ":", brkPos);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newBrk = (StringFind(valStr, "true") >= 0);
+         if(newBrk != InpBreakoutOn)
+         {
+            InpBreakoutOn = newBrk;
+            Print("[SYNC] Breakout ", (newBrk ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai max_daily_loss
+   int mdlPos = StringFind(respStr, "\"max_daily_loss\"", cfgPos);
+   if(mdlPos >= 0)
+   {
+      int colonP = StringFind(respStr, ":", mdlPos);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 10; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newMDL = (int)StringToDouble(numStr);
+            if(newMDL >= 1 && newMDL <= 20 && newMDL != InpMaxDailyLoss)
+            {
+               InpMaxDailyLoss = newMDL;
+               Print("[SYNC] Max daily loss da dashboard: ", newMDL);
+               //--- Se il daily stop era attivo, ricalcola se va rimosso
+               if(g_dailyStopped)
+               {
+                  double pnlPct = (g_dailyStartBalance > 0) ? ((g_dailyWinAmount - g_dailyLossAmount) / g_dailyStartBalance * 100.0) : 0;
+                  // Rimuovi stop se il drawdown non supera il nuovo limite
+                  if(pnlPct > -(double)InpMaxDailyLoss)
+                  {
+                     g_dailyStopped = false;
+                     Print("[SYNC] Daily stop RIMOSSO — P&L ", DoubleToString(pnlPct, 2), "% > limite -", InpMaxDailyLoss, "%");
+                  }
+               }
+            }
+         }
+      }
+   }
+}
+// |                                                                    |
+// |  FLUSSO:                                                           |
+// |  1. EA trova candidato (STD/BRK/REV)                              |
+// |  2. Costruisce JSON con tutti i dati del cross + contesto         |
+// |  3. Invia via WebRequest() al server AI                           |
+// |  4. Riceve: {"signal":"BUY","confidence":78}                      |
+// |  5. Se confidence >= soglia → trade confermato                    |
+// |                                                                    |
+// |  Il server AI e' un file Python con LightGBM che gira su          |
+// |  Render.com (gratuito). VPS fa solo il messenger.                |
+//+------------------------------------------------------------------+
+
+//--- Costruisce JSON con dati del cross candidato + contesto mercato
+string BuildAIRequestJSON(int idx, string tag)
+{
+   //--- Dati del cross candidato
+   string json = "{";
+
+   //--- Simbolo e direzione proposta
+   json += "\"symbol\":\"" + NormSym(g_symbol[idx]) + "\",";
+   json += "\"module\":\"" + tag + "\",";
+   json += "\"direction\":\"" + (g_radarType[idx] == RT_LONG || g_histogramState[idx] == HS_GREEN_LIGHT ? "BUY" : "SELL") + "\",";
+
+   //--- Features del cross (9 valori)
+   json += "\"rv\":" + DoubleToString(g_radarValue[idx], 2) + ",";
+   json += "\"adx\":" + DoubleToString(g_adx[idx], 1) + ",";
+   json += "\"adr_pct\":" + DoubleToString(g_adrPercent[idx], 1) + ",";
+   json += "\"adr_pip\":" + DoubleToString(g_pipFatti[idx], 0) + ",";
+   json += "\"adr_media\":" + DoubleToString(g_media10gg[idx], 0) + ",";
+   json += "\"ema_pos\":" + IntegerToString(g_emaPosition[idx]) + ",";
+   json += "\"hist\":\"" + HistStateStr(g_histogramState[idx]) + "\",";
+   json += "\"close\":" + DoubleToString(g_close[idx], 5) + ",";
+   json += "\"ema_gap_pct\":" + DoubleToString(
+      (g_close[idx] > 0 ? MathAbs(g_ema21[idx] - g_ema200[idx]) / g_close[idx] * 100.0 : 0), 3) + ",";
+
+   //--- Tracking data
+   json += "\"rv_prev\":" + DoubleToString(g_prevRV[idx], 2) + ",";
+   json += "\"rv_prev2\":" + DoubleToString(g_prev2RV[idx], 2) + ",";
+   json += "\"light_streak\":" + IntegerToString(g_lightStreak[idx]) + ",";
+   json += "\"was_gray\":" + (g_prevWasGray[idx] ? "true" : "false") + ",";
+   json += "\"hist_flip_bar\":" + IntegerToString(g_histFlipBar[idx]) + ",";
+
+   //--- Momentum metrics
+   json += "\"nm\":" + DoubleToString(g_normMomentum[idx], 4) + ",";
+   json += "\"nm_signal\":" + DoubleToString(g_momentumSignal[idx], 4) + ",";
+   json += "\"nm_accel\":" + DoubleToString(g_momentumAccel[idx], 4) + ",";
+   json += "\"nm_dist\":" + DoubleToString(g_momentumDist[idx], 4) + ",";
+   json += "\"is_compressing\":" + (g_isCompressing[idx] ? "true" : "false") + ",";
+
+   //--- Histogram sequence features (ultime 8 candele)
+   json += "\"hist_consec_color\":" + IntegerToString(g_histConsecColor[idx]) + ",";
+   json += "\"hist_bars_since_gray\":" + IntegerToString(g_histBarsSinceGray[idx]) + ",";
+   json += "\"hist_cycle_count\":" + IntegerToString(g_histCycleCount[idx]) + ",";
+   json += "\"hist_crossed_zero\":" + (g_histCrossedZero[idx] ? "1" : "0") + ",";
+   json += "\"hist_bar_slope\":" + DoubleToString(g_histBarSlope[idx], 6) + ",";
+   json += "\"hist_pullback_depth\":" + DoubleToString(g_histPullbackDepth[idx], 1) + ",";
+   json += "\"hist_seq_encoded\":" + IntegerToString(g_histSeqEncoded[idx]) + ",";
+   json += "\"hist_bar_ratio\":" + DoubleToString(g_histBarRatio[idx], 3) + ",";
+
+   //--- Contesto mercato (riassunto 28 cross)
+   int nonGray = 0, greenCount = 0, redCount = 0;
+   double sumAbsRV = 0, avgRV = 0;
+   int extremeRV = 0; // cross con |RV| > 60
+
+   for(int i = 0; i < g_dataCount; i++)
+   {
+      if(g_histogramState[i] != HS_GRAY) nonGray++;
+      if(g_histogramState[i] == HS_GREEN_LIGHT || g_histogramState[i] == HS_GREEN_DARK) greenCount++;
+      if(g_histogramState[i] == HS_RED_LIGHT   || g_histogramState[i] == HS_RED_DARK)   redCount++;
+      sumAbsRV += MathAbs(g_radarValue[i]);
+      if(MathAbs(g_radarValue[i]) > 60) extremeRV++;
+   }
+
+   if(g_dataCount > 0) avgRV = sumAbsRV / g_dataCount;
+
+   json += "\"context\":{";
+   json += "\"total\":" + IntegerToString(g_dataCount) + ",";
+   json += "\"non_gray\":" + IntegerToString(nonGray) + ",";
+   json += "\"green\":" + IntegerToString(greenCount) + ",";
+   json += "\"red\":" + IntegerToString(redCount) + ",";
+   json += "\"avg_abs_rv\":" + DoubleToString(avgRV, 1) + ",";
+   json += "\"extreme_rv\":" + IntegerToString(extremeRV);
+   json += "}";
+
+   json += "}";
+
+   return json;
+}
+
+//--- Chiama il server AI e ritorna confidenza (0-100) o -1 se errore
+int GetAIConfirmation(int idx, string tag)
+{
+   g_aiCalls++;
+
+   //--- Costruisci richiesta
+   string json = BuildAIRequestJSON(idx, tag);
+
+   if(InpAILog)
+      Print("[AI] Request: ", StringSubstr(json, 0, 200), "...");
+
+   //--- Chiama server
+   string response = AICallServer(json);
+
+   if(response == "")
+   {
+      g_aiErrors++;
+      g_aiLastError = "Nessuna risposta dal server";
+      Print("[AI] ERRORE: ", g_aiLastError);
+      return -1;
+   }
+
+   if(InpAILog)
+      Print("[AI] Response: ", StringSubstr(response, 0, 150));
+
+   //--- Parse risposta
+   int confidence = AIParseConfidence(response);
+   string signal  = AIParseSignal(response);
+
+   g_aiLastConf   = confidence;
+   g_aiLastSignal = signal;
+
+   //--- A/B Test: chiama GPT in parallelo (non blocca il trade)
+   if(g_abGptEnabled)
+   {
+      ABTestGPTCall(idx, tag, signal, confidence);
+   }
+
+   //--- Verifica che il segnale sia coerente con la direzione proposta
+   bool isLong = (g_radarType[idx] == RT_LONG || g_histogramState[idx] == HS_GREEN_LIGHT);
+   if(signal != "")
+   {
+      if(isLong && signal == "SELL")
+      {
+         Print("[AI] DISCORDANTE: proposta BUY ma AI dice SELL (conf: ", confidence, "%)");
+         return 0; // Zero = non confermato
+      }
+      if(!isLong && signal == "BUY")
+      {
+         Print("[AI] DISCORDANTE: proposta SELL ma AI dice BUY (conf: ", confidence, "%)");
+         return 0;
+      }
+   }
+
+   return confidence;
+}
+
+//--- Esegue WebRequest verso il server AI
+string AICallServer(string json)
+{
+   string headers = "Content-Type: application/json\r\n";
+   string response = "";
+   char post[];
+   char result[];
+   string resultHeaders;
+
+   //--- Converti string a byte array
+   int len = StringLen(json);
+   ArrayResize(post, len);
+   for(int i = 0; i < len; i++)
+      post[i] = (char)StringGetCharacter(json, i);
+
+   //--- WebRequest
+   int res = WebRequest("POST", InpAIUrl, headers, InpAITimeout, post, result, resultHeaders);
+
+   if(res == -1)
+   {
+      int err = GetLastError();
+      g_aiLastError = "WebRequest err=" + IntegerToString(err) + " " + ErrDesc(err);
+      Print("[AI] WebRequest fallito: ", g_aiLastError);
+      Print("[AI] Verifica: Strumenti > Opzioni > Expert Advisors > Allow WebRequest");
+      Print("[AI] Aggiungi URL: ", InpAIUrl);
+      return "";
+   }
+
+   //--- Converti risposta a string
+   response = "";
+   int resultLen = ArraySize(result);
+   for(int i = 0; i < resultLen; i++)
+      response += CharToString(result[i]);
+
+   return response;
+}
+
+//--- Esegue WebRequest verso il server AI per feedback
+string AICallFeedback(string json, string url)
+{
+   string headers = "Content-Type: application/json\r\n";
+   char post[];
+   char result[];
+   string resultHeaders;
+
+   int len = StringLen(json);
+   ArrayResize(post, len);
+   for(int i = 0; i < len; i++)
+      post[i] = (char)StringGetCharacter(json, i);
+
+   int res = WebRequest("POST", url, headers, InpAITimeout, post, result, resultHeaders);
+
+   if(res == -1)
+   {
+      int err = GetLastError();
+      Print("[FEEDBACK] WebRequest fallito: err=", err, " ", ErrDesc(err));
+      return "";
+   }
+
+   string response = "";
+   int resultLen = ArraySize(result);
+   for(int i = 0; i < resultLen; i++)
+      response += CharToString(result[i]);
+
+   return response;
+}
+
+//--- Estrae confidence dalla risposta JSON
+//    Cerca: "confidence":78  o  "confidence": 78
+int AIParseConfidence(string response)
+{
+   //--- Cerca "confidence"
+   int pos = StringFind(response, "\"confidence\"");
+   if(pos < 0) pos = StringFind(response, "\"conf\"");
+   if(pos < 0)
+   {
+      Print("[AI] PARSE: 'confidence' non trovato in risposta");
+      return 0;
+   }
+
+   //--- Trova il due punti
+   int colonPos = StringFind(response, ":", pos);
+   if(colonPos < 0) return 0;
+
+   //--- Trova il numero
+   int start = colonPos + 1;
+   string numStr = "";
+   for(int i = start; i < StringLen(response); i++)
+   {
+      string ch = StringSubstr(response, i, 1);
+      if((ch >= "0" && ch <= "9") || ch == ".")
+         numStr += ch;
+      else if(StringLen(numStr) > 0)
+         break;
+   }
+
+   if(StringLen(numStr) == 0) return 0;
+
+   return (int)StringToDouble(numStr);
+}
+
+//--- Estrae signal dalla risposta JSON
+//    Cerca: "signal":"BUY"  o  "signal": "SELL"
+string AIParseSignal(string response)
+{
+   int pos = StringFind(response, "\"signal\"");
+   if(pos < 0) return "";
+
+   int colonPos = StringFind(response, ":", pos);
+   if(colonPos < 0) return "";
+
+   //--- Trova le virgolette
+   int startQ = StringFind(response, "\"", colonPos);
+   if(startQ < 0) return "";
+   int endQ = StringFind(response, "\"", startQ + 1);
+   if(endQ < 0) return "";
+
+   string sig = StringSubstr(response, startQ + 1, endQ - startQ - 1);
+   StringToUpper(sig);
+   return sig;
+}
+
+//+------------------------------------------------------------------+
+// |  FEEDBACK TRACKING — Salva dati trade aperto per feedback futuro  |
+//+------------------------------------------------------------------+
+void StoreTradeForFeedback(int ticket, int idx, string tag, bool isLong)
+{
+   //--- Trova slot libero (o ricicla il piu' vecchio)
+   int slot = -1;
+   for(int i = 0; i < g_fbCount; i++)
+   {
+      if(g_fbTicket[i] == 0 || g_fbSent[i])
+      {
+         slot = i;
+         break;
+      }
+   }
+   if(slot < 0)
+   {
+      if(g_fbCount < MAX_TRADES_TRACK)
+      {
+         slot = g_fbCount;
+         g_fbCount++;
+      }
+      else
+      {
+         // Sovrascrivi il piu' vecchio (primo slot)
+         slot = 0;
+      }
+   }
+
+   g_fbTicket[slot]    = ticket;
+   g_fbSymbol[slot]    = NormSym(g_symbol[idx]);
+   g_fbDirection[slot] = isLong ? "BUY" : "SELL";
+   g_fbModule[slot]    = tag;
+   g_fbRV[slot]        = g_radarValue[idx];
+   g_fbADX[slot]       = g_adx[idx];
+   g_fbADRPct[slot]    = g_adrPercent[idx];
+   g_fbHist[slot]      = HistStateStr(g_histogramState[idx]);
+   g_fbAIConf[slot]    = g_aiLastConf;
+   g_fbAISignal[slot]  = g_aiLastSignal;
+   g_fbEntryPrice[slot]= isLong ? MarketInfo(g_symbol[idx], MODE_ASK)
+                                : MarketInfo(g_symbol[idx], MODE_BID);
+   g_fbSent[slot]      = false;
+
+   //--- Momentum metrics
+   g_fbNormMom[slot]   = g_normMomentum[idx];
+   g_fbMomAccel[slot]  = g_momentumAccel[idx];
+   g_fbMomDist[slot]   = g_momentumDist[idx];
+   g_fbCompress[slot]  = g_isCompressing[idx];
+
+   Print("[FEEDBACK] Salvato ticket #", ticket, " ", NormSym(g_symbol[idx]),
+         " ", (isLong ? "BUY" : "SELL"), " | slot ", slot, "/", g_fbCount);
+}
+
+//+------------------------------------------------------------------+
+// |  CHECK CLOSED TRADES — Invia feedback per trade chiusi            |
+//+------------------------------------------------------------------+
+void CheckClosedTradesFeedback()
+{
+   if(g_fbCount == 0) return;
+
+   //--- Scansiona lo storico per trovare trade chiusi di recente
+   for(int i = OrdersHistoryTotal() - 1; i >= 0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_HISTORY)) continue;
+      if(OrderMagicNumber() != InpMagicNumber) continue;
+      if(OrderType() > OP_SELL) continue;
+
+      int ticket = OrderTicket();
+
+      //--- Cerca nei nostri slot
+      for(int s = 0; s < g_fbCount; s++)
+      {
+         if(g_fbTicket[s] != ticket) continue;
+         if(g_fbSent[s]) continue;
+
+         //--- Trovato! Prepara e invia feedback
+         double profit = OrderProfit() + OrderSwap() + OrderCommission();
+         double entryPrc = OrderOpenPrice();
+         double exitPrc  = OrderClosePrice();
+         bool won = (profit > 0);
+
+         //--- Calcola pips
+         string sym = OrderSymbol();
+         int digits = (int)MarketInfo(sym, MODE_DIGITS);
+         double point = MarketInfo(sym, MODE_POINT);
+         double pipMult = (digits == 3 || digits == 5) ? 10.0 : 1.0;
+         double pips = 0;
+         if(point > 0)
+         {
+            if(OrderType() == OP_BUY)
+               pips = (exitPrc - entryPrc) / point / pipMult;
+            else
+               pips = (entryPrc - exitPrc) / point / pipMult;
+         }
+
+         //--- Invia al server
+         string json = BuildFeedbackJSON(
+            ticket, g_fbSymbol[s], g_fbDirection[s], g_fbModule[s],
+            profit, pips, won,
+            g_fbRV[s], g_fbADX[s], g_fbADRPct[s], g_fbHist[s],
+            g_fbAIConf[s], g_fbAISignal[s], g_fbEntryPrice[s], exitPrc,
+            g_fbNormMom[s], g_fbMomAccel[s], g_fbMomDist[s], g_fbCompress[s]);
+
+         //--- Usa endpoint /feedback invece di /predict
+         string feedbackUrl = InpAIUrl;
+         StringReplace(feedbackUrl, "/predict", "/feedback");
+         string response = AICallFeedback(json, feedbackUrl);
+
+         if(response != "")
+         {
+            g_fbSent[s] = true;
+            g_fbSentCount++;
+            Print("[FEEDBACK] #", ticket, " ", g_fbSymbol[s],
+                  " | ", (won ? "WIN" : "LOSS"), " ", DoubleToString(profit, 2), " EUR",
+                  " | ", DoubleToString(pips, 1), " pips",
+                  " | Inviato! (totale: ", g_fbSentCount, ")");
+
+            //--- Logga anche su CSV locale (per trade chiusi via TP/SL broker)
+            LogTradeToCSV(ticket);
+         }
+         else
+         {
+            Print("[FEEDBACK] #", ticket, " Errore invio - riprovo al prossimo tick");
+         }
+         break;
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+// |  BUILD FEEDBACK JSON                                              |
+//+------------------------------------------------------------------+
+string BuildFeedbackJSON(int ticket, string sym, string direction, string module,
+                         double profit, double pips, bool won,
+                         double rv, double adx, double adrPct, string hist,
+                         int aiConf, string aiSignal, double entryPrc, double exitPrc,
+                         double normMom, double momAccel, double momDist, bool isCompress)
+{
+   string json = "{";
+   json += "\"ticket\":" + IntegerToString(ticket) + ",";
+   json += "\"symbol\":\"" + sym + "\",";
+   json += "\"direction\":\"" + direction + "\",";
+   json += "\"module\":\"" + module + "\",";
+   json += "\"entry_price\":" + DoubleToString(entryPrc, 5) + ",";
+   json += "\"exit_price\":" + DoubleToString(exitPrc, 5) + ",";
+   json += "\"profit\":" + DoubleToString(profit, 2) + ",";
+   json += "\"pips\":" + DoubleToString(pips, 1) + ",";
+   json += "\"won\":" + (won ? "true" : "false") + ",";
+   json += "\"ai_confidence\":" + IntegerToString(aiConf) + ",";
+   json += "\"ai_signal\":\"" + aiSignal + "\",";
+   json += "\"rv\":" + DoubleToString(rv, 2) + ",";
+   json += "\"adx\":" + DoubleToString(adx, 1) + ",";
+   json += "\"adr_pct\":" + DoubleToString(adrPct, 1) + ",";
+   json += "\"hist\":\"" + hist + "\",";
+   json += "\"nm\":" + DoubleToString(normMom, 4) + ",";
+   json += "\"nm_accel\":" + DoubleToString(momAccel, 4) + ",";
+   json += "\"nm_dist\":" + DoubleToString(momDist, 4) + ",";
+   json += "\"is_compressing\":" + (isCompress ? "true" : "false");
+   json += "}";
+   return json;
+}
+
+//--- Vecchia funzione mantenuta per compatibilita'
+void AISendFeedback(int ticket, bool won)
+{
+   if(!InpUseAI) return;
+
+   if(won)
+      Print("[AI][FEEDBACK] Ticket #", ticket, " = WIN");
+   else
+      Print("[AI][FEEDBACK] Ticket #", ticket, " = LOSS");
+}
+
+//+------------------------------------------------------------------+
+// |  LOG TRADE TO CSV — Storico locale persistente                    |
+// |  File: MQL4/Files/PRP_TradeLog.csv                               |
+// |  Aggiornato automaticamente ad ogni trade chiuso                  |
+//+------------------------------------------------------------------+
+void LogTradeToCSV(int ticket)
+{
+   //--- Evita duplicati: controlla se gia' loggato
+   for(int c = 0; c < g_fbCount; c++)
+   {
+      if(g_fbTicket[c] == ticket && g_fbLogged[c]) return;
+   }
+
+   if(!OrderSelect(ticket, SELECT_BY_TICKET)) return;
+
+   string csvFile = "PRP_TradeLog.csv";
+
+   //--- Dati ordine
+   int    ot        = OrderType();
+   string sym       = OrderSymbol();
+   double lots      = OrderLots();
+   double entryPrc  = OrderOpenPrice();
+   double exitPrc   = OrderClosePrice();
+   double sl        = OrderStopLoss();
+   double tp        = OrderTakeProfit();
+   double profit    = OrderProfit() + OrderSwap() + OrderCommission();
+   string openTime  = TimeToString(OrderOpenTime(), TIME_DATE | TIME_MINUTES);
+   string closeTime = TimeToString(OrderCloseTime(), TIME_DATE | TIME_MINUTES);
+   string comment   = OrderComment();
+
+   bool isLong = (ot == OP_BUY);
+   string direction = isLong ? "BUY" : "SELL";
+
+   //--- Calcola pips
+   int digits = (int)MarketInfo(sym, MODE_DIGITS);
+   double point = MarketInfo(sym, MODE_POINT);
+   double pipMult = (digits == 3 || digits == 5) ? 10.0 : 1.0;
+   double pips = 0;
+   if(point > 0)
+   {
+      if(isLong) pips = (exitPrc - entryPrc) / point / pipMult;
+      else       pips = (entryPrc - exitPrc) / point / pipMult;
+   }
+
+   //--- Estrai modulo dal commento (es: "PRP_STD_2026.06.06" -> "STD")
+   string module = "UNK";
+   int modPos = StringFind(comment, "PRP_");
+   if(modPos >= 0)
+   {
+      string sub = StringSubstr(comment, modPos + 4);
+      int usPos = StringFind(sub, "_");
+      if(usPos > 0)
+         module = StringSubstr(sub, 0, usPos);
+      else
+         module = sub;
+   }
+
+   //--- Cerca dati AI nei feedback track
+   int    aiConf   = 0;
+   string aiSignal = "";
+   double rv       = 0;
+   double adx      = 0;
+   double adrPct   = 0;
+   string hist     = "";
+
+   for(int s = 0; s < g_fbCount; s++)
+   {
+      if(g_fbTicket[s] == ticket)
+      {
+         aiConf   = g_fbAIConf[s];
+         aiSignal = g_fbAISignal[s];
+         rv       = g_fbRV[s];
+         adx      = g_fbADX[s];
+         adrPct   = g_fbADRPct[s];
+         hist     = g_fbHist[s];
+         break;
+      }
+   }
+
+   bool won = (profit > 0);
+
+   //--- Scrivi su CSV
+   int handle = FileOpen(csvFile, FILE_CSV | FILE_READ | FILE_WRITE, ';');
+   if(handle == INVALID_HANDLE)
+   {
+      Print("[TRADELOG] Errore apertura file: ", csvFile);
+      return;
+   }
+
+   //--- Controlla se il file e' vuoto (serve header)
+   bool needHeader = true;
+   if(FileSize(handle) > 10)
+   {
+      FileSeek(handle, 0, SEEK_SET);
+      string firstLine = FileReadString(handle);
+      if(StringFind(firstLine, "Ticket") >= 0)
+         needHeader = false;
+   }
+
+   //--- Vai alla fine
+   FileSeek(handle, 0, SEEK_END);
+
+   if(needHeader)
+   {
+      FileWrite(handle,
+         "Ticket", "Symbol", "Direction", "Module",
+         "Lots", "EntryPrice", "ExitPrice", "SL", "TP",
+         "Profit", "Pips", "Won",
+         "AI_Conf", "AI_Signal",
+         "RV", "ADX", "ADR%", "Hist",
+         "OpenTime", "CloseTime", "Comment");
+   }
+
+   FileWrite(handle,
+      IntegerToString(ticket),
+      sym,
+      direction,
+      module,
+      DoubleToString(lots, 2),
+      DoubleToString(entryPrc, (int)MarketInfo(sym, MODE_DIGITS)),
+      DoubleToString(exitPrc, (int)MarketInfo(sym, MODE_DIGITS)),
+      DoubleToString(sl, (int)MarketInfo(sym, MODE_DIGITS)),
+      DoubleToString(tp, (int)MarketInfo(sym, MODE_DIGITS)),
+      DoubleToString(profit, 2),
+      DoubleToString(pips, 1),
+      won ? "true" : "false",
+      IntegerToString(aiConf),
+      aiSignal,
+      DoubleToString(rv, 2),
+      DoubleToString(adx, 1),
+      DoubleToString(adrPct, 1),
+      hist,
+      openTime,
+      closeTime,
+      comment);
+
+   FileClose(handle);
+
+   //--- Segna come loggato per evitare duplicati
+   for(int c = 0; c < g_fbCount; c++)
+   {
+      if(g_fbTicket[c] == ticket) { g_fbLogged[c] = true; break; }
+   }
+
+   Print("[TRADELOG] #", ticket, " ", sym, " ", direction,
+         " | ", (won ? "WIN" : "LOSS"), " ", DoubleToString(profit, 2), " EUR",
+         " | ", DoubleToString(pips, 1), " pips",
+         " | AI:", aiConf, "%",
+         " | RV:", DoubleToString(rv, 1),
+         " | loggato su ", csvFile);
+}
+
+//+------------------------------------------------------------------+
+// |  A/B TEST GPT CALL — Chiama GPT senza bloccare il trade         |
+// |  Ogni candidato trade viene inviato anche a GPT-4o-mini          |
+// |  Il risultato viene loggato ma NON influisce sulla decisione      |
+// |  Dopo 100 trade confronteremo chi aveva più ragione              |
+//+------------------------------------------------------------------+
+void ABTestGPTCall(int idx, string tag, string lgbmSignal, int lgbmConf)
+{
+   //--- Costruisci URL /predict_gpt
+   string gptUrl = InpAIUrl;
+   StringReplace(gptUrl, "/predict", "/predict_gpt");
+
+   //--- Riutilizza lo stesso JSON della richiesta LightGBM + aggiungi ai_confidence
+   string json = BuildAIRequestJSON(idx, tag);
+   // Rimuovi l'ultima } e aggiungi il campo
+   json = StringSubstr(json, 0, StringLen(json) - 1);
+   json += ",\"ai_confidence\":" + IntegerToString(lgbmConf);
+   json += "}";
+
+   //--- Invia (silenzioso, non blocca)
+   string headers = "Content-Type: application/json\r\n";
+   char postData[];
+   int len = StringLen(json);
+   ArrayResize(postData, len);
+   for(int i = 0; i < len; i++)
+      postData[i] = (char)StringGetCharacter(json, i);
+
+   char result[];
+   string resultHeaders;
+
+   int res = WebRequest("POST", gptUrl, headers, 8000, postData, result, resultHeaders);
+
+   if(res == -1) return; // Silenzioso
+
+   //--- Parse risposta GPT
+   string respStr = "";
+   int resultLen = ArraySize(result);
+   for(int i = 0; i < resultLen; i++)
+      respStr += CharToString(result[i]);
+
+   g_abGptCalls++;
+
+   //--- Estrai segnale GPT
+   string gptSignal = "";
+   int sigPos = StringFind(respStr, "\"signal\"");
+   if(sigPos >= 0)
+   {
+      int colonP = StringFind(respStr, ":", sigPos);
+      if(colonP >= 0)
+      {
+         int startQ = StringFind(respStr, "\"", colonP);
+         int endQ = StringFind(respStr, "\"", startQ + 1);
+         if(startQ >= 0 && endQ > startQ)
+            gptSignal = StringSubstr(respStr, startQ + 1, endQ - startQ - 1);
+      }
+   }
+
+   //--- Estrai confidenza GPT
+   int gptConf = 0;
+   int confPos = StringFind(respStr, "\"confidence\"");
+   if(confPos >= 0)
+   {
+      int colonP = StringFind(respStr, ":", confPos);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 10; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if((ch >= "0" && ch <= "9") || ch == ".") numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0) gptConf = (int)StringToDouble(numStr);
+      }
+   }
+
+   //--- Confronta
+   bool agree = (gptSignal == lgbmSignal);
+   if(agree) g_abGptAgree++;
+   else g_abGptDisagree++;
+
+   Print("[AB TEST] #", g_abGptCalls, " ", NormSym(g_symbol[idx]),
+         " | LightGBM: ", lgbmSignal, " ", lgbmConf, "%",
+         " | GPT: ", gptSignal, " ", gptConf, "%",
+         " | ", (agree ? "CONCORDI" : "DISCORDI"));
+}
+
+//+------------------------------------------------------------------+
+// |  END OF EA                                                        |
+//+------------------------------------------------------------------+
