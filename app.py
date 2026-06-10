@@ -288,6 +288,12 @@ def log_request(data, result):
             "hist_pullback_depth": data.get("hist_pullback_depth", 0),
             "hist_seq_encoded": data.get("hist_seq_encoded", 0),
             "hist_bar_ratio": data.get("hist_bar_ratio", 0),
+            "hist_color_now": data.get("hist_color_now", 0),
+            "hist_color_slope": data.get("hist_color_slope", 0),
+            "hist_color_curve": data.get("hist_color_curve", 0),
+            "hist_color_r2": data.get("hist_color_r2", 0),
+            "hist_color_centroid": data.get("hist_color_centroid", 0.5),
+            "hist_color_sum": data.get("hist_color_sum", 0),
         }
         pd.DataFrame([row]).to_csv(REQUESTS_PATH, mode='a',
             header=not os.path.exists(REQUESTS_PATH), index=False)
@@ -348,6 +354,12 @@ def log_feedback(fb_data):
             "hist_pullback_depth": fb_data.get("hist_pullback_depth", 0),
             "hist_seq_encoded": fb_data.get("hist_seq_encoded", 0),
             "hist_bar_ratio": fb_data.get("hist_bar_ratio", 1),
+            "hist_color_now": fb_data.get("hist_color_now", 0),
+            "hist_color_slope": fb_data.get("hist_color_slope", 0),
+            "hist_color_curve": fb_data.get("hist_color_curve", 0),
+            "hist_color_r2": fb_data.get("hist_color_r2", 0),
+            "hist_color_centroid": fb_data.get("hist_color_centroid", 0.5),
+            "hist_color_sum": fb_data.get("hist_color_sum", 0),
         }
         # Append in modo robusto: se il CSV esiste con uno schema diverso,
         # uniamo le colonne cosi' i vecchi trade (senza feature nuove) restano
@@ -454,6 +466,9 @@ def train_model():
             "hist_consec_color", "hist_bars_since_gray", "hist_cycle_count",
             "hist_crossed_zero", "hist_bar_slope", "hist_pullback_depth",
             "hist_seq_encoded", "hist_bar_ratio",
+            # Forma istogramma (colore-pesata)
+            "hist_color_now", "hist_color_slope", "hist_color_curve",
+            "hist_color_r2", "hist_color_centroid", "hist_color_sum",
         ]
         for feat in OPTIONAL_FEATURES:
             if feat in df.columns:
@@ -611,6 +626,12 @@ def predict():
             "hist_pullback_depth": float(data.get("hist_pullback_depth", 0)),
             "hist_seq_encoded": int(data.get("hist_seq_encoded", 0)),
             "hist_bar_ratio": float(data.get("hist_bar_ratio", 1)),
+            "hist_color_now": float(data.get("hist_color_now", 0)),
+            "hist_color_slope": float(data.get("hist_color_slope", 0)),
+            "hist_color_curve": float(data.get("hist_color_curve", 0)),
+            "hist_color_r2": float(data.get("hist_color_r2", 0)),
+            "hist_color_centroid": float(data.get("hist_color_centroid", 0.5)),
+            "hist_color_sum": int(data.get("hist_color_sum", 0)),
         }
 
         # === STEP 1: Prova LightGBM ===
