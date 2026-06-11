@@ -1268,7 +1268,13 @@ Barra/Media ratio: {hist_bar_ratio:.2f}"""
                 {"role": "system", "content": GPT_SYSTEM_PROMPT},
                 {"role": "user", "content": user_msg}
             ],
-            "max_completion_tokens": 2000,
+            # gpt-5-nano e' un modello di reasoning: "minimal" riduce drasticamente
+            # il tempo di "pensiero" interno (per una decisione BUY/SELL non serve
+            # ragionare a lungo). Passa da ~7-13s a ~1-2s.
+            "reasoning_effort": "minimal",
+            # La risposta e' solo {signal, confidence, reasoning}: ~150 token bastano.
+            # Il budget include i reasoning tokens, quindi teniamo un margine.
+            "max_completion_tokens": 400,
             "response_format": {"type": "json_object"}
         }
 
@@ -1280,7 +1286,9 @@ Barra/Media ratio: {hist_bar_ratio:.2f}"""
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=15) as response:
+            # Timeout 8s: rete di sicurezza. Se GPT supera questo tempo, il server
+            # non resta bloccato oltre il timeout dell'EA (15s).
+            with urllib.request.urlopen(req, timeout=8) as response:
                 result = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as he:
             error_body = he.read().decode("utf-8") if he.fp else ""
