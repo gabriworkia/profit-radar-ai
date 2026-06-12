@@ -1021,6 +1021,7 @@ DEFAULT_EA_CONFIG = {
     "aggressiveness": 2,
     "use_ai": True,
     "ai_min_conf": 70,
+    "daily_stop_on": True,
     "max_consec_loss": 2,
     "loss_weight": 1.5,
     "rv_max": 30,
@@ -1041,7 +1042,7 @@ ea_status = {
     "ai_errors": 0, "ai_missed_trades": 0,
     "warmup_ok": False, "warmup_last": None,
     "data_source": "", "cross_active": 0, "cross_total": 0,
-    "daily_stopped": False, "account_currency": "EUR", "ea_version": "",
+    "daily_stopped": False, "daily_stop_on": True, "account_currency": "EUR", "ea_version": "",
 }
 
 
@@ -1100,7 +1101,7 @@ def update_ea_config():
         cfg = load_ea_config()
         updatable = [
             "aggressiveness", "use_ai", "ai_min_conf",
-            "max_consec_loss", "loss_weight",
+            "daily_stop_on", "max_consec_loss", "loss_weight",
             "rv_max", "adr_max", "min_rr", "breakout_on", "reversal_on",
             "fixed_lots", "max_concurrent",
         ]
@@ -1109,7 +1110,7 @@ def update_ea_config():
             if key in data:
                 old_val = cfg.get(key)
                 new_val = data[key]
-                if key in ("use_ai", "breakout_on", "reversal_on"):
+                if key in ("use_ai", "breakout_on", "reversal_on", "daily_stop_on"):
                     new_val = bool(new_val)
                 elif key in ("adr_max", "loss_weight", "min_rr", "fixed_lots"):
                     new_val = float(new_val)
@@ -1286,9 +1287,9 @@ Barra/Media ratio: {hist_bar_ratio:.2f}"""
         )
 
         try:
-            # Timeout 8s: rete di sicurezza. Se GPT supera questo tempo, il server
-            # non resta bloccato oltre il timeout dell'EA (15s).
-            with urllib.request.urlopen(req, timeout=8) as response:
+            # Timeout 12s: rete di sicurezza. Deve restare SOTTO il timeout EA (18s)
+            # cosi' l'EA non si arrende prima che il server finisca.
+            with urllib.request.urlopen(req, timeout=12) as response:
                 result = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as he:
             error_body = he.read().decode("utf-8") if he.fp else ""
@@ -1543,6 +1544,8 @@ tr:hover{background:#1a1a35}
 
 <div class="section"><h2>Configurazione EA</h2>
 <div class="config-grid">
+  <div class="cfg-item"><label>🛑 Daily Stop</label>
+    <select id="cfgDailyStop"><option value="true">ATTIVO</option><option value="false">DISATTIVATO</option></select></div>
   <div class="cfg-item"><label>Stile (aggressivita')</label>
     <select id="cfgAggr"><option value="1">Conservativo (filtri tutti)</option><option value="2" selected>Moderato (filtri -1)</option><option value="3">Aggressivo (filtri -2)</option></select></div>
   <div class="cfg-item"><label>AI Attiva</label>
@@ -1648,6 +1651,7 @@ function refresh(){
       document.getElementById('dStopDetail').textContent='In attesa della 1a vincita (per ora conta solo lo stop loss di fila)';
     }
 
+    document.getElementById('cfgDailyStop').value=(cfg.daily_stop_on!==false)?'true':'false';
     document.getElementById('cfgAggr').value=cfg.aggressiveness||2;
     document.getElementById('cfgAI').value=cfg.use_ai?'true':'false';
     document.getElementById('cfgMinConf').value=cfg.ai_min_conf||70;
@@ -1672,7 +1676,7 @@ function refresh(){
   });
 }
 function saveAllConfig(){
-  const cfg={aggressiveness:parseInt(document.getElementById('cfgAggr').value),use_ai:document.getElementById('cfgAI').value==='true',ai_min_conf:parseInt(document.getElementById('cfgMinConf').value),max_consec_loss:parseInt(document.getElementById('cfgMaxCLoss').value),loss_weight:parseFloat(document.getElementById('cfgLossWeight').value),rv_max:parseInt(document.getElementById('cfgRVMax').value),adr_max:parseFloat(document.getElementById('cfgADRMax').value),min_rr:parseFloat(document.getElementById('cfgMinRR').value),breakout_on:document.getElementById('cfgBrk').value==='true',reversal_on:document.getElementById('cfgRev').value==='true'};
+  const cfg={daily_stop_on:document.getElementById('cfgDailyStop').value==='true',aggressiveness:parseInt(document.getElementById('cfgAggr').value),use_ai:document.getElementById('cfgAI').value==='true',ai_min_conf:parseInt(document.getElementById('cfgMinConf').value),max_consec_loss:parseInt(document.getElementById('cfgMaxCLoss').value),loss_weight:parseFloat(document.getElementById('cfgLossWeight').value),rv_max:parseInt(document.getElementById('cfgRVMax').value),adr_max:parseFloat(document.getElementById('cfgADRMax').value),min_rr:parseFloat(document.getElementById('cfgMinRR').value),breakout_on:document.getElementById('cfgBrk').value==='true',reversal_on:document.getElementById('cfgRev').value==='true'};
   fetch(API+'/ea_config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)}).then(r=>r.json()).then(d=>{
     const m=document.getElementById('cfgMsg');m.textContent=d.status==='ok'?'✅ '+d.message:'❌ '+(d.message||'errore');m.style.color=d.status==='ok'?'#81c784':'#ef5350';setTimeout(()=>{m.textContent=''},5000);
   }).catch(()=>{document.getElementById('cfgMsg').textContent='❌ Errore connessione'});
