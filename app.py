@@ -45,7 +45,7 @@ REQUESTS_PATH = os.path.join(DATA_DIR, "requests_log.csv")
 EA_CONFIG_PATH = os.path.join(DATA_DIR, "ea_config.json")
 EA_STATUS_PATH = os.path.join(DATA_DIR, "ea_status.json")
 AB_RESULTS_PATH = os.path.join(DATA_DIR, "ab_results.csv")
-
+AB_OUTCOMES_PATH = os.path.join(DATA_DIR, "ab_outcomes.csv")  # confronto A/B + esito reale del trade
 # GitHub URLs per ripristino post-deploy
 GITHUB_AB_URL = "https://raw.githubusercontent.com/gabriworkia/profit-radar-ai/data-backup/Data/ab_results.csv"
 GITHUB_REQUESTS_URL = "https://raw.githubusercontent.com/gabriworkia/profit-radar-ai/data-backup/Data/requests_log.csv"
@@ -377,6 +377,102 @@ def log_feedback(fb_data):
             new_df.to_csv(FEEDBACK_PATH, index=False)
     except Exception as e:
         print(f"[FEEDBACK ERROR] {e}")
+
+    # Dopo aver loggato il feedback, prova a collegarlo a un confronto A/B
+    try:
+        record_ab_outcome(fb_data)
+    except Exception as e:
+        print(f"[AB-OUTCOME ERROR] {e}")
+
+
+def record_ab_outcome(fb_data):
+    """Collega un trade chiuso (feedback) al confronto A/B GPT-vs-LightGBM fatto
+    al momento della decisione, e registra CHI AVEVA RAGIONE in ab_outcomes.csv.
+
+    Cosi' l'analisi 'quando GPT e LightGBM erano discordi, chi ha azzeccato?'
+    e' gia' pronta, senza incrociare i file a mano.
+    """
+    if not os.path.exists(AB_RESULTS_PATH):
+        return
+
+    symbol = str(fb_data.get("symbol", "")).replace("+", "").strip().upper()
+    direction = str(fb_data.get("direction", "")).strip().upper()
+    won = bool(fb_data.get("won", False))
+    pips = float(fb_data.get("pips", 0) or 0)
+    if not symbol or not direction:
+        return
+
+    try:
+        ab = pd.read_csv(AB_RESULTS_PATH)
+    except Exception:
+        return
+    if ab.empty:
+        return
+
+    # Normalizza per il match
+    ab["_sym"] = ab["symbol"].astype(str).str.replace("+", "", regex=False).str.strip().str.upper()
+    ab["_dir"] = ab["direction"].astype(str).str.strip().str.upper()
+
+    # Cerca l'ULTIMO confronto A/B per questo symbol+direction (il piu' recente
+    # prima della chiusura) che non sia gia' stato risolto.
+    already = set()
+    if os.path.exists(AB_OUTCOMES_PATH):
+        try:
+            done = pd.read_csv(AB_OUTCOMES_PATH)
+            already = set(done["ab_timestamp"].astype(str).tolist())
+        except Exception:
+            already = set()
+
+    cand = ab[(ab["_sym"] == symbol) & (ab["_dir"] == direction)]
+    cand = cand[~cand["timestamp"].astype(str).isin(already)]
+    if cand.empty:
+        return
+
+    match = cand.iloc[-1]   # il piu' recente non ancora risolto
+
+    lgbm_sig = str(match.get("lgbm_signal", "")).upper()
+    gpt_sig = str(match.get("gpt_signal", "")).upper()
+    agreement = str(match.get("agreement", ""))
+
+    # CHI AVEVA RAGIONE?
+    #  - LightGBM "voleva entrare" nella direzione del trade -> se WIN aveva ragione
+    #  - GPT spesso diceva HOLD (non entrare) -> se LOSS aveva ragione GPT
+    lgbm_right = ""
+    gpt_right = ""
+    if agreement == "DIFF":
+        # tipicamente: LGBM=BUY/SELL (entra), GPT=HOLD (non entra)
+        if gpt_sig == "HOLD":
+            lgbm_right = "SI" if won else "NO"
+            gpt_right = "NO" if won else "SI"
+        else:
+            # entrambi danno una direzione ma diversa
+            lgbm_right = "SI" if (lgbm_sig == direction and won) else "NO"
+            gpt_right = "SI" if (gpt_sig == direction and won) else "NO"
+    else:  # SAME: erano d'accordo
+        lgbm_right = "SI" if won else "NO"
+        gpt_right = "SI" if won else "NO"
+
+    out_row = {
+        "ab_timestamp": match.get("timestamp", ""),
+        "feedback_timestamp": datetime.now(timezone.utc).isoformat(),
+        "symbol": symbol,
+        "direction": direction,
+        "module": fb_data.get("module", ""),
+        "lgbm_signal": lgbm_sig,
+        "lgbm_conf": match.get("lgbm_conf", ""),
+        "gpt_signal": gpt_sig,
+        "gpt_conf": match.get("gpt_conf", ""),
+        "agreement": agreement,
+        "outcome": "WIN" if won else "LOSS",
+        "pips": pips,
+        "lgbm_right": lgbm_right,
+        "gpt_right": gpt_right,
+    }
+    pd.DataFrame([out_row]).to_csv(
+        AB_OUTCOMES_PATH, mode="a",
+        header=not os.path.exists(AB_OUTCOMES_PATH), index=False)
+    print(f"[AB-OUTCOME] {symbol} {direction} | {agreement} | "
+          f"LGBM:{lgbm_sig}({lgbm_right}) GPT:{gpt_sig}({gpt_right}) | {out_row['outcome']}")
 
 
 # ============================================================
@@ -1372,6 +1468,47 @@ def ab_stats():
             "agreement_pct": round(same / total * 100, 1) if total > 0 else 0,
             "gpt_enabled": bool(OPENAI_API_KEY), "gpt_model": GPT_MODEL,
         })
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+
+@app.route("/ab_outcomes", methods=["GET"])
+def ab_outcomes():
+    """Statistiche 'chi aveva ragione' (LightGBM vs GPT) sui trade gia' chiusi.
+    Risponde alla domanda: quando erano DISCORDI, chi ha azzeccato di piu'?"""
+    result = {
+        "total_resolved": 0,
+        "diff": {"count": 0, "lgbm_right": 0, "gpt_right": 0, "lgbm_right_pct": 0},
+        "same": {"count": 0, "won": 0, "win_rate": 0},
+        "note": "Servono molti dati per conclusioni affidabili (>30 DIFF).",
+    }
+    if not os.path.exists(AB_OUTCOMES_PATH):
+        return jsonify(result)
+    try:
+        df = pd.read_csv(AB_OUTCOMES_PATH)
+        result["total_resolved"] = len(df)
+
+        diff = df[df["agreement"] == "DIFF"]
+        if len(diff) > 0:
+            lr = int((diff["lgbm_right"] == "SI").sum())
+            gr = int((diff["gpt_right"] == "SI").sum())
+            result["diff"] = {
+                "count": len(diff),
+                "lgbm_right": lr,
+                "gpt_right": gr,
+                "lgbm_right_pct": round(lr / len(diff) * 100, 1),
+                "net_pips_if_followed_lgbm": round(float(diff["pips"].sum()), 1),
+            }
+
+        same = df[df["agreement"] == "SAME"]
+        if len(same) > 0:
+            won = int((same["outcome"] == "WIN").sum())
+            result["same"] = {
+                "count": len(same),
+                "won": won,
+                "win_rate": round(won / len(same) * 100, 1),
+            }
+        return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)})
 
