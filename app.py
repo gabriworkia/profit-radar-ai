@@ -40,6 +40,7 @@ gpt_logger = logging.getLogger("gpt_api")
 # ============================================================
 DATA_DIR = os.environ.get("DATA_DIR", "data")
 MODEL_PATH = os.path.join(DATA_DIR, "model.pkl")
+REV_MODEL_PATH = os.path.join(DATA_DIR, "model_reversal.pkl")  # modello dedicato al Reversal
 FEEDBACK_PATH = os.path.join(DATA_DIR, "feedback.csv")
 REQUESTS_PATH = os.path.join(DATA_DIR, "requests_log.csv")
 EA_CONFIG_PATH = os.path.join(DATA_DIR, "ea_config.json")
@@ -855,6 +856,102 @@ def feedback():
 @app.route("/retrain", methods=["POST"])
 def retrain():
     result = train_model()
+    return jsonify(result)
+
+
+# ============================================================
+#  MODELLO REVERSAL DEDICATO
+# ============================================================
+
+def train_reversal_model(csv_url=None, csv_text=None):
+    """Addestra un modello LightGBM DEDICATO al Reversal, separato dallo Standard.
+    Legge i segnali da PRP_ReversalSignals.csv (arricchito con tutte le feature).
+    La label e' 'Outcome' (WIN/LOSS). Usa solo le righe con esito definito.
+    """
+    try:
+        import io as _io
+        import joblib
+        import lightgbm as lgb
+
+        # 1) Carica i dati: da URL, da testo, o dal file locale
+        if csv_text:
+            df = pd.read_csv(_io.StringIO(csv_text), sep=";")
+        elif csv_url:
+            import urllib.request
+            req = urllib.request.Request(csv_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                df = pd.read_csv(_io.StringIO(resp.read().decode("utf-8")), sep=";")
+        else:
+            rev_csv = os.path.join(DATA_DIR, "PRP_ReversalSignals.csv")
+            if not os.path.exists(rev_csv):
+                return {"error": "Nessun PRP_ReversalSignals.csv disponibile. Fornisci csv_url o caricalo."}
+            df = pd.read_csv(rev_csv, sep=";")
+
+        # 2) Tieni solo righe con esito definito (WIN/LOSS), scarta PENDING/TEST
+        if "Outcome" not in df.columns:
+            return {"error": "Colonna 'Outcome' mancante nel CSV"}
+        df = df[df["Outcome"].isin(["WIN", "LOSS"])].copy()
+        if len(df) < 20:
+            return {"error": f"Servono almeno 20 segnali con esito, attuali: {len(df)}"}
+
+        df["won"] = (df["Outcome"] == "WIN").astype(int)
+
+        # 3) Feature: tutte le colonne numeriche tranne metadati/esito
+        exclude = {"Time", "Symbol", "Direction", "Entry", "SL", "TP",
+                   "AI_Conf", "PriceAfter", "PipsMove", "Outcome", "won"}
+        feature_cols = []
+        for c in df.columns:
+            if c in exclude:
+                continue
+            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+            if df[c].nunique() > 1:   # scarta colonne costanti
+                feature_cols.append(c)
+
+        if len(feature_cols) < 3:
+            return {"error": f"Troppe poche feature utili: {feature_cols}"}
+
+        X = df[feature_cols].values
+        y = df["won"].values
+        pos, neg = int(y.sum()), int(len(y) - y.sum())
+        if pos < 3 or neg < 3:
+            return {"error": f"Classi sbilanciate: WIN={pos}, LOSS={neg}"}
+
+        params = {
+            "objective": "binary", "metric": "auc", "boosting_type": "gbdt",
+            "num_leaves": 15, "learning_rate": 0.05,
+            "feature_fraction": 0.8, "bagging_fraction": 0.8, "bagging_freq": 5,
+            "min_child_samples": 5, "verbose": -1, "n_jobs": 1, "seed": 42,
+        }
+        train_data = lgb.Dataset(X, label=y, feature_name=feature_cols)
+        rev_model = lgb.train(params, train_data, num_boost_round=100,
+                              valid_sets=[train_data], callbacks=[lgb.log_evaluation(0)])
+
+        joblib.dump(rev_model, REV_MODEL_PATH)
+        feat_path = REV_MODEL_PATH.replace(".pkl", "_features.json")
+        with open(feat_path, "w") as f:
+            json.dump(list(feature_cols), f)
+
+        importance = dict(zip(feature_cols, rev_model.feature_importance().tolist()))
+        print(f"[REV-TRAIN] Modello Reversal addestrato: {len(df)} segnali, {len(feature_cols)} feature")
+
+        return {
+            "status": "trained", "model": "reversal",
+            "samples": len(df), "won": pos, "lost": neg,
+            "win_rate": round(pos / len(y) * 100, 1),
+            "features_used": len(feature_cols),
+            "features": importance,
+        }
+    except Exception as e:
+        traceback.print_exc()
+        return {"error": str(e)}
+
+
+@app.route("/train_reversal", methods=["POST"])
+def train_reversal():
+    """Addestra il modello Reversal. Accetta opzionalmente {csv_url:...} per
+    importare il CSV dei segnali Reversal (es. da GitHub raw)."""
+    data = request.get_json(force=True, silent=True) or {}
+    result = train_reversal_model(csv_url=data.get("csv_url"))
     return jsonify(result)
 
 
