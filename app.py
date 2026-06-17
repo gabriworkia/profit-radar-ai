@@ -50,8 +50,12 @@ AB_OUTCOMES_PATH = os.path.join(DATA_DIR, "ab_outcomes.csv")  # confronto A/B + 
 # GitHub URLs per ripristino post-deploy
 GITHUB_AB_URL = "https://raw.githubusercontent.com/gabriworkia/profit-radar-ai/data-backup/Data/ab_results.csv"
 GITHUB_REQUESTS_URL = "https://raw.githubusercontent.com/gabriworkia/profit-radar-ai/data-backup/Data/requests_log.csv"
+GITHUB_FEEDBACK_URL = "https://raw.githubusercontent.com/gabriworkia/profit-radar-ai/data-backup/Data/feedback.csv"
+GITHUB_ABOUT_URL = "https://raw.githubusercontent.com/gabriworkia/profit-radar-ai/data-backup/Data/ab_outcomes.csv"
+GITHUB_REVSIG_URL = "https://raw.githubusercontent.com/gabriworkia/profit-radar-ai/data-backup/Data/PRP_ReversalSignals.csv"
 
 MIN_FEEDBACK_FOR_TRAIN = int(os.environ.get("MIN_FEEDBACK_FOR_TRAIN", "50"))
+AUTO_BACKUP_EVERY = int(os.environ.get("AUTO_BACKUP_EVERY", "5"))  # backup GitHub ogni N feedback
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 GPT_MODEL = "gpt-5-nano-2025-08-07"
 
@@ -842,6 +846,15 @@ def feedback():
         if os.path.exists(FEEDBACK_PATH):
             try: fb_count = len(pd.read_csv(FEEDBACK_PATH))
             except: pass
+
+        # --- BACKUP AUTOMATICO su GitHub ogni N feedback ---
+        # Cosi' i dati sopravvivono ai reset di Render senza intervento manuale.
+        try:
+            if fb_count > 0 and fb_count % AUTO_BACKUP_EVERY == 0:
+                saved = auto_backup_to_github()
+                print(f"[AUTO-BACKUP] feedback #{fb_count} -> salvati {saved} file su GitHub")
+        except Exception as _e:
+            print(f"[AUTO-BACKUP] errore: {_e}")
 
         return jsonify({
             "status": "ok", "logged": True,
@@ -2004,6 +2017,62 @@ def download_file(filename):
     return send_file(filepath, mimetype=mime, as_attachment=True, download_name=filename)
 
 
+def _github_put_file(fname, github_token, repo, branch):
+    """Carica un singolo file su GitHub. Ritorna dict con esito."""
+    import urllib.request, base64
+    fpath = os.path.join(DATA_DIR, fname)
+    if not os.path.exists(fpath):
+        return {"file": fname, "status": "skipped", "reason": "non esiste"}
+    try:
+        with open(fpath, "r", encoding="utf-8") as f:
+            content = f.read()
+        if not content or len(content) < 10:
+            return {"file": fname, "status": "skipped", "reason": "vuoto"}
+        encoded = base64.b64encode(content.encode("utf-8")).decode("utf-8")
+        api_url = f"https://api.github.com/repos/{repo}/contents/Data/{fname}"
+        sha = None
+        try:
+            req = urllib.request.Request(api_url, headers={
+                "Authorization": f"token {github_token}", "User-Agent": "ProfitRadarAI"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                sha = json.loads(resp.read().decode("utf-8")).get("sha")
+        except Exception:
+            pass
+        payload = {"message": f"auto-save: {fname} ({len(content)} bytes)",
+                   "content": encoded, "branch": branch}
+        if sha:
+            payload["sha"] = sha
+        req = urllib.request.Request(api_url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Authorization": f"token {github_token}",
+                     "Content-Type": "application/json", "User-Agent": "ProfitRadarAI"},
+            method="PUT")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            resp.read()
+        return {"file": fname, "status": "saved", "size": len(content)}
+    except Exception as e:
+        return {"file": fname, "status": "error", "reason": str(e)}
+
+
+# File salvati nel backup (CSV: dati grezzi; il modello si riaddestra al boot)
+BACKUP_FILES = ["ab_results.csv", "requests_log.csv", "gpt_api.log",
+                "feedback.csv", "ab_outcomes.csv", "PRP_ReversalSignals.csv"]
+
+
+def auto_backup_to_github():
+    """Backup automatico (chiamato dal /feedback). Ritorna n. file salvati."""
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not token:
+        return 0
+    repo = "gabriworkia/profit-radar-ai"
+    saved = 0
+    for fname in BACKUP_FILES:
+        r = _github_put_file(fname, token, repo, "data-backup")
+        if r.get("status") == "saved":
+            saved += 1
+    return saved
+
+
 @app.route("/save_to_github", methods=["POST"])
 def save_to_github():
     """Salva i file di log su GitHub branch 'data-backup' (NON triggera' Render deploy)."""
@@ -2015,7 +2084,7 @@ def save_to_github():
     branch = "data-backup"  # Branch separato — NON triggera' Render deploy!
     import urllib.request, urllib.error, base64
 
-    files_to_save = ["ab_results.csv", "requests_log.csv", "gpt_api.log"]
+    files_to_save = BACKUP_FILES
     results = []
 
     for fname in files_to_save:
@@ -2085,6 +2154,9 @@ def restore_logs_from_github():
     for name, path, url in [
         ("ab_results.csv", AB_RESULTS_PATH, GITHUB_AB_URL),
         ("requests_log.csv", REQUESTS_PATH, GITHUB_REQUESTS_URL),
+        ("feedback.csv", FEEDBACK_PATH, GITHUB_FEEDBACK_URL),
+        ("ab_outcomes.csv", AB_OUTCOMES_PATH, GITHUB_ABOUT_URL),
+        ("PRP_ReversalSignals.csv", os.path.join(DATA_DIR, "PRP_ReversalSignals.csv"), GITHUB_REVSIG_URL),
     ]:
         if os.path.exists(path):
             try:
@@ -2115,8 +2187,17 @@ def restore_logs_from_github():
 #  INIT — All'avvio del server
 # ============================================================
 ensure_data_dir()
-load_model()
-restore_logs_from_github()
+restore_logs_from_github()   # PRIMA ripristina i dati (incl. feedback.csv)
+load_model()                 # poi prova a caricare il modello
+# Se il modello non c'e' ma abbiamo feedback ripristinati, riaddestra al boot
+if not stats.get("model_is_trained") and os.path.exists(FEEDBACK_PATH):
+    try:
+        if len(pd.read_csv(FEEDBACK_PATH)) >= MIN_FEEDBACK_FOR_TRAIN:
+            print("[INIT] Modello assente ma feedback ripristinati -> riaddestro...")
+            r = train_model()
+            print(f"[INIT] Retrain al boot: {r.get('status', r)}")
+    except Exception as _e:
+        print(f"[INIT] Retrain al boot fallito: {_e}")
 print(f"[INIT] Profit Radar Pro AI Server v4.0")
 print(f"[INIT] Data dir: {DATA_DIR}")
 print(f"[INIT] Modello: {'LOADED' if stats['model_is_trained'] else 'REGOLE (nessun modello)'}")
