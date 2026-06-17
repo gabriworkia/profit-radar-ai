@@ -1,0 +1,3 @@
+timestamp,symbol,module,direction,rv,adx,adr_pct,hist,ai_signal,ai_confidence,method,lgbm_signal,lgbm_conf,hybrid_reasoning,hist_consec_color,hist_bars_since_gray,hist_cycle_count,hist_crossed_zero,hist_bar_slope,hist_pullback_depth,hist_seq_encoded,hist_bar_ratio,hist_color_now,hist_color_slope,hist_color_curve,hist_color_r2,hist_color_centroid,hist_color_sum
+2026-06-17T12:00:42.058621+00:00,NZDCHF,REV,SELL,-38.78,32.8,82.8,RED_DARK,SELL,60,rules_v1,SELL,60,LightGBM 60% >= 60% → uso LightGBM,30,30,7,0,1.754838,21.5,3124,0.862,-1,-0.0565,0.0074,0.248,0.454,-20
+2026-06-17T12:00:42.123597+00:00,NZDJPY,REV,SELL,-43.56,54.0,62.3,RED_DARK,SELL,70,rules_v1,SELL,70,LightGBM 70% >= 60% → uso LightGBM,30,30,7,0,-0.157828,0.6,3094,1.006,-1,-0.0336,0.0029,0.014,0.494,-24
