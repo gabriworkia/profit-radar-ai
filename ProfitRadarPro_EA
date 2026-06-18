@@ -92,6 +92,9 @@ extern int    InpFractalBars    = 50;             // Candele per cercare il frac
 extern string _s4_              = "===== FILTRI STANDARD =====";   // ----------
 extern int    InpRV_Max         = 30;             // Radar Value massimo per entrare
 extern double InpADR_Max        = 50.0;           // ADR% max - VETO no trade sopra (mercato saturo)
+extern int    InpMaxConsecutive   = 15;           // STD: blocca se candele consecutive > N (trend esaurito)
+extern double InpMinEMAGapPct     = 0.05;         // STD: gap minimo EMA21-EMA200 (%) - sotto = trend debole
+extern double InpRevMinEMAGapPct = 0.10;          // Reversal: gap minimo EMA (%) - serve trend definito per il reversal
 
 //=== RX FILTER =======================================================
 extern string _s4b_             = "===== FILTRO RX =====";   // ----------
@@ -121,11 +124,12 @@ extern bool   InpReversalOn     = true;           // Reversal: fa trade reali?
 extern bool   InpReversalObserve = false;         // Reversal: solo osservazione (no trade)
 extern double InpRevLots         = 0.01;          // Reversal: lotto dedicato (0=usa lotto principale)
 extern string InpRevTestMsg     = "";             // Reversal: testo di test per verificare il CSV
-extern int    InpReversalRV     = 30;             // Reversal: Radar Value minimo
-extern double InpReversalADR    = 60.0;           // Reversal: ADR% minimo (mercato maturo)
+extern int    InpReversalRV     = 65;             // Reversal: Radar Value minimo (trend deve essere estremo)
+extern int    InpReversalRVMax  = 120;            // Reversal: Radar Value massimo (sopra = gia' invertito)
+extern double InpReversalADR    = 90.0;          // Reversal: ADR% minimo (mercato deve aver superato la media)
 extern bool   InpRevReqDecel    = true;           // Reversal: richiedi decelerazione
 extern int    InpRevMinDecel    = 5;              // Reversal: decelerazione minima
-extern bool   InpRevReqRX       = false;          // Reversal: richiedi segnale RX
+extern bool   InpRevReqRX       = true;           // Reversal: richiedi segnale RX (NEW-H/NEW-L)
 extern bool   InpRevRXBonus     = true;           // Reversal: bonus se RX presente
 extern bool   InpRevReqDiverg   = true;           // Reversal: richiedi divergenza
 extern int    InpRevDivergBars  = 8;              // Reversal: candele per la divergenza
@@ -207,6 +211,8 @@ double   g_close[MAX_PAIRS];
 double   g_ema21[MAX_PAIRS];
 double   g_ema200[MAX_PAIRS];
 int      g_emaPosition[MAX_PAIRS];
+double   g_emaGapPct[MAX_PAIRS];       // Distanza EMA21-EMA200 in %
+double   g_emaGapPctPrev[MAX_PAIRS];   // Gap precedente (per slope)
 double   g_adx[MAX_PAIRS];
 double   g_radarValue[MAX_PAIRS];
 int      g_radarType[MAX_PAIRS];
@@ -533,6 +539,8 @@ int OnInit()
 
    ArrayInitialize(g_prevRV, 0);
    ArrayInitialize(g_prev2RV, 0);
+   ArrayInitialize(g_emaGapPct, 0);
+   ArrayInitialize(g_emaGapPctPrev, 0);
    ArrayInitialize(g_swingHigh, 0);
    ArrayInitialize(g_swingLow, 0);
    ArrayInitialize(g_histFlipBar, 999);
@@ -1164,6 +1172,11 @@ bool ReadCSV()
       g_ema21[idx]          = StringToDouble(fields[2]);
       g_ema200[idx]         = StringToDouble(fields[3]);
       g_emaPosition[idx]    = (int)StringToDouble(fields[4]);
+      //--- Calcola gap EMA (%) da CSV
+      if(g_close[idx] > 0)
+         g_emaGapPct[idx] = (g_ema21[idx] - g_ema200[idx]) / g_close[idx] * 100.0;
+      else
+         g_emaGapPct[idx] = 0;
       g_adx[idx]            = StringToDouble(fields[5]);
 
       double parsedRV = StringToDouble(fields[6]);
@@ -1306,21 +1319,21 @@ void ApplyAggressiveness()
       //--- CONSERVATIVO: tutti i filtri devono passare
       g_stdMinQuality      = 4;      // STANDARD: serve 4/4 (tutti)
       g_brkMinQuality      = 8;      // BREAKOUT: serve 8/8 (tutti)
-      g_revMinQuality      = 4;      // REVERSAL: serve 4/4 (tutti)
+      g_revMinQuality      = 5;      // REVERSAL: serve 5/5 (tutti: ADR, ADX, Hist+RX, EMA, Decel)
    }
    else if(InpAggressiveness == AGGR_MODERATO)
    {
       //--- MODERATO: un filtro puo' saltare (tutti -1)
       g_stdMinQuality      = 3;      // STANDARD: serve 3/4 (tutti -1)
       g_brkMinQuality      = 7;      // BREAKOUT: serve 7/8 (tutti -1)
-      g_revMinQuality      = 3;      // REVERSAL: serve 3/4 (tutti -1)
+      g_revMinQuality      = 4;      // REVERSAL: serve 4/5 (tutti -1)
    }
    else if(InpAggressiveness == AGGR_AGGRESSIVO)
    {
       //--- AGGRESSIVO: due filtri possono saltare (tutti -2)
       g_stdMinQuality      = 2;      // STANDARD: basta 2/4 (tutti -2)
       g_brkMinQuality      = 6;      // BREAKOUT: basta 6/8 (tutti -2)
-      g_revMinQuality      = 2;      // REVERSAL: basta 2/4 (tutti -2)
+      g_revMinQuality      = 3;      // REVERSAL: basta 3/5 (tutti -2)
    }
    else
    {
@@ -1457,6 +1470,11 @@ void CollectMarketData()
       g_ema200[idx]      = iMA(sym, PERIOD_M15, 200, 0, MODE_EMA, PRICE_CLOSE, shift);
       g_adx[idx]         = iADX(sym, PERIOD_M15, 14, PRICE_CLOSE, MODE_MAIN, shift);
       g_emaPosition[idx] = (g_ema21[idx] > g_ema200[idx]) ? 1 : -1;
+      //--- Calcola gap EMA (%)
+      if(g_close[idx] > 0)
+         g_emaGapPct[idx] = (g_ema21[idx] - g_ema200[idx]) / g_close[idx] * 100.0;
+      else
+         g_emaGapPct[idx] = 0;
 
       double radarVal = 0;
       string histState = "GRAY";
@@ -2032,6 +2050,7 @@ void UpdateReversalTracking()
 
       g_prev2RV[i] = g_prevRV[i];
       g_prevRV[i]  = g_radarValue[i];
+      g_emaGapPctPrev[i] = g_emaGapPct[i];  // Salva gap per slope
 
       double highMax = 0;
       double lowMin  = 999999;
@@ -2233,6 +2252,27 @@ bool CheckStandardFilters(int idx, int &qualityCount, string &details)
    // (vincenti entrano in media a ~31% ADR, perdenti a ~71%).
    // Questo e' un VETO assoluto: se il range giornaliero e' gia' troppo
    // consumato, il trade viene SCARTATO a prescindere dagli altri filtri.
+   //--- Calcola EMA gap e slope (serve per i VETO e il quality count)
+   double emaGapAbs = MathAbs(g_emaGapPct[idx]);
+   double emaSlopeNow = g_emaGapPct[idx] - g_emaGapPctPrev[idx];
+   //=== VETO CONSECUTIVE: trend troppo maturo (esaurito) ===
+   if(g_histConsecColor[idx] > InpMaxConsecutive)
+   {
+      details = "VETO consecutive=" + IntegerToString(g_histConsecColor[idx]) + " > " + IntegerToString(InpMaxConsecutive) + " (trend esaurito)";
+      return false;
+   }
+   //=== VETO EMA SLOPE: trend perde forza (convergenza) ===
+   if(emaSlopeNow < 0 && MathAbs(emaSlopeNow) > 0.01)
+   {
+      details = "VETO slope=" + DoubleToString(emaSlopeNow, 4) + " (trend perde forza)";
+      return false;
+   }
+   //=== VETO EMA GAP: gap troppo piccolo = trend debole ===
+   if(emaGapAbs < InpMinEMAGapPct)
+   {
+      details = "VETO emaGap=" + DoubleToString(emaGapAbs, 3) + "% < " + DoubleToString(InpMinEMAGapPct, 2) + "% (trend debole)";
+      return false;
+   }
    if(g_adrPercent[idx] >= InpADR_Max)
    {
       details = "VETO ADR=" + DoubleToString(g_adrPercent[idx], 0) + "% >= " + DoubleToString(InpADR_Max, 0) + "% (mercato saturo)";
@@ -2248,6 +2288,18 @@ bool CheckStandardFilters(int idx, int &qualityCount, string &details)
       qualityCount++;
    else
       StringConcatenate(details, details, "RV=" + DoubleToString(MathAbs(g_radarValue[idx]), 0) + " ");
+   // EMA gap: piu' e' grande, piu' il trend e' definito
+   if(emaGapAbs >= InpMinEMAGapPct * 2)
+      qualityCount++;  // Gap doppio = trend forte
+   else if(emaGapAbs >= InpMinEMAGapPct)
+      qualityCount++;  // Gap sufficiente
+   else
+      StringConcatenate(details, details, "EMAGap=" + DoubleToString(emaGapAbs, 3) + "% ");
+   // EMA slope: positivo = divergenza (trend forte), negativo = convergenza (debole)
+   if(emaSlopeNow > 0)
+      qualityCount++;  // Trend si rafforza
+   else
+      StringConcatenate(details, details, "Slope=" + DoubleToString(emaSlopeNow, 4) + " ");
 
    if(isLong && g_emaPosition[idx] == 1)
       qualityCount++;
@@ -2683,7 +2735,7 @@ void ProcessStandard()
 
       if(qCount < g_stdMinQuality)
       {
-         Print("[STD] ", g_symbol[i], " filtri: ", qCount, "/4 < min ", g_stdMinQuality);
+         Print("[STD] ", g_symbol[i], " filtri: ", qCount, "/5 < min ", g_stdMinQuality);
          continue;
       }
 
@@ -3099,12 +3151,20 @@ void ProcessReversal()
       double absRV = MathAbs(g_radarValue[i]);
       double absPrevRV = MathAbs(g_prevRV[i]);
 
-      if(absRV < InpReversalRV) continue;
+      if(absRV < InpReversalRV)
+      {
+         Print("[REV] ", g_symbol[i], " SCARTATO: |RV|=", DoubleToString(absRV, 1), " < ", InpReversalRV, " (trend non estremo)");
+         continue;
+      }
+      if(absRV > InpReversalRVMax)
+      {
+         Print("[REV] ", g_symbol[i], " SCARTATO: |RV|=", DoubleToString(absRV, 1), " > ", InpReversalRVMax, " (gia' invertito/corrotto)");
+         continue;
+      }
       if(g_radarValue[i] == 0) continue;
 
       if(absRV > 150)
       {
-         // Oltre 150 = quasi certamente dato corrotto, scarta per sicurezza
          Print("[REV] ", g_symbol[i], " SCARTATO: |RV|=", DoubleToString(absRV, 1), " > 150 (anomalo)");
          continue;
       }
@@ -3116,6 +3176,15 @@ void ProcessReversal()
          continue;
       }
 
+      //=== VETO EMA GAP: medie mobili devono essere distanti ===
+      // Se EMA21 e EMA200 sono vicine, non c'e' un trend definito da invertire.
+      double revEmaGap = MathAbs(g_emaGapPct[i]);
+      if(revEmaGap < InpRevMinEMAGapPct)
+      {
+         Print("[REV] ", g_symbol[i], " SCARTATO: EMA gap=", DoubleToString(revEmaGap, 3), "% < ", DoubleToString(InpRevMinEMAGapPct, 2), "% (trend non definito)");
+         continue;
+      }
+
       int qCount = 0;
       string details = "";
       int hist = g_histogramState[i];
@@ -3124,17 +3193,50 @@ void ProcessReversal()
       if(g_adrPercent[i] >= InpReversalADR) qCount++;
       else StringConcatenate(details, details, "ADR=" + DoubleToString(g_adrPercent[i], 0) + "% ");
 
-      // Q2 (ADX forte: soglia tarata, mediana gruppo B = 28)
-      if(g_adx[i] >= 30) qCount++;
+      // Q2 (ADX: trend deve essere maturo ma non debole)
+      if(g_adx[i] >= 25) qCount++;
       else StringConcatenate(details, details, "ADX=" + DoubleToString(g_adx[i], 0) + " ");
 
-      // Q3
-      bool histTransition = false;
-      if(hist == HS_RED_DARK || hist == HS_GREEN_DARK) histTransition = true;
-      if(hist == HS_GRAY) histTransition = true;
-      if(g_histFlipBar[i] <= InpRevMaxHistAge) histTransition = true;
-      if(histTransition) qCount++;
-      else StringConcatenate(details, details, "Hist=" + HistStateStr(hist) + " ");
+      // Q3 - SEQUENZA COLORI: entrata SOLO al primo LIGHT dopo GRAY
+      // Sequenza corretta reversal:
+      //   RED_LIGHT -> RED_DARK (barre si accorciano) -> GRAY -> GREEN_LIGHT = LONG
+      //   GREEN_LIGHT -> GREEN_DARK (barre si accorciano) -> GRAY -> RED_LIGHT = SHORT
+      // GRAY da solo NON basta: e' solo un segnale di attesa.
+      // DARK NON basta: il trend e' ancora forte.
+      // Serve la PRIMA candela LIGHT dopo il GRAY.
+      bool histOK = false;
+      if(hist == HS_GRAY)
+      {
+         // GRAY = momentum azzerato, ma NON entrare ancora
+         // Bisogna aspettare la conferma del nuovo colore
+         StringConcatenate(details, details, "Hist=GRAY (aspetta conferma) ");
+      }
+      else if(hist == HS_GREEN_DARK || hist == HS_RED_DARK)
+      {
+         // DARK = trend ancora forte, non e' il momento
+         StringConcatenate(details, details, "Hist=" + HistStateStr(hist) + " (trend forte, aspetta) ");
+      }
+      else if(hist == HS_GREEN_LIGHT || hist == HS_RED_LIGHT)
+      {
+         // Prima candela LIGHT dopo GRAY = momento dell'entrata
+         if(g_histBarsSinceGray[i] <= 1)
+            histOK = true;
+         else
+            StringConcatenate(details, details, "Hist=" + HistStateStr(hist) + " (too late, " + IntegerToString(g_histBarsSinceGray[i]) + " bars) ");
+      }
+      
+      if(histOK) qCount++;
+
+      // Q3b - FILTRO RX: segnale R-X NEW-H/NEW-L
+      if(InpRevReqRX)
+      {
+         if(g_rxPresent[i] && (g_rxType[i] == RX_NEW_H || g_rxType[i] == RX_NEW_L))
+            qCount++;  // RX confermato
+         else
+            StringConcatenate(details, details, "RX=missing ");
+      }
+      else
+         qCount++;  // RX non richiesto, punto automatico
 
       // Q4
       bool decelerating = false;
@@ -3161,7 +3263,7 @@ void ProcessReversal()
 
       if(qCount < g_revMinQuality)
       {
-         Print("[REV] ", g_symbol[i], " filtri: ", qCount, "/4 < min ", g_revMinQuality);
+         Print("[REV] ", g_symbol[i], " filtri: ", qCount, "/5 < min ", g_revMinQuality);
          continue;
       }
 
@@ -3197,7 +3299,7 @@ void ProcessReversal()
       candidateCount++;
 
       Print("[REV] ", sym, " ", (isLong ? "BUY" : "SELL"),
-            " | ", qCount, "/4 | RV=", DoubleToString(g_radarValue[i], 1),
+            " | ", qCount, "/5 | RV=", DoubleToString(g_radarValue[i], 1),
             " | ADX=", DoubleToString(g_adx[i], 0),
             " | score=", score);
    }
@@ -4116,7 +4218,7 @@ void ShowDashboard()
    lines[line++] = "--- FILTRI (servono / totali) ---";
    lines[line++] = "STD " + IntegerToString(g_stdMinQuality) + "/4" +
                    " | BRK " + IntegerToString(g_brkMinQuality) + "/8" +
-                   " | REV " + IntegerToString(g_revMinQuality) + "/4";
+                   " | REV " + IntegerToString(g_revMinQuality) + "/5";
    lines[line++] = "Valori: RV<" + IntegerToString(InpRV_Max) +
                    " ADR<" + DoubleToString(InpADR_Max, 0) + "%" +
                    " | RR>" + DoubleToString(InpMinRR, 1);
