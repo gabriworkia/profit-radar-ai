@@ -1794,7 +1794,7 @@ tr:hover{background:#1a1a35}
   <div class="cfg-item"><label>🛑 Daily Stop</label>
     <select id="cfgDailyStop"><option value="true">ATTIVO</option><option value="false">DISATTIVATO</option></select></div>
   <div class="cfg-item"><label>Stile (aggressivita')</label>
-    <select id="cfgAggr"><option value="1">Conservativo (filtri tutti)</option><option value="2" selected>Moderato (filtri -1)</option><option value="3">Aggressivo (filtri -2)</option></select></div>
+    <select id="cfgAggr"><option value="1">Conservativo (filtri tutti)</option><option value="2" selected>Moderato (filtri -1)</option><option value="3">Aggressivo (filtri -2)</option><option value="4">Iperconservativo (whitelist + 6 criteri rigidi)</option></select></div>
   <div class="cfg-item"><label>AI Attiva</label>
     <select id="cfgAI"><option value="true">SI</option><option value="false">NO</option></select></div>
   <div class="cfg-item"><label>Confidenza minima %</label>
