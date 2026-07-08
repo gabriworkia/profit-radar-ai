@@ -21,7 +21,8 @@ enum ENUM_AGGR
 {
    AGGR_CONSERVATIVO = 1,   // Conservativo (pochi trade, tutti i filtri)
    AGGR_MODERATO     = 2,   // Moderato (medio, tutti i filtri -1)
-   AGGR_AGGRESSIVO   = 3    // Aggressivo (tanti trade, tutti i filtri -2)
+   AGGR_AGGRESSIVO   = 3,    // Aggressivo (tanti trade, tutti i filtri -2)
+   AGGR_IPERCONSERVATIVO = 4  // IPER: whitelist + 6 criteri rigidi (tutti devono passare)
 };
 
 //=====================================================================
@@ -36,15 +37,17 @@ extern int    InpMaxConsecLoss  = 2;      // Stop dopo quante perdite di fila
 extern double InpLossWeight      = 1.5;   // Peso perdite vs vincite (1.5 = +50%)
 
 extern ENUM_AGGR InpAggressiveness = AGGR_MODERATO;   // Stile trading (Conserv/Moder/Aggress)
+extern bool   InpHyperOn         = false;         // IPERCONSERVATIVO: modalita' iper-selettiva attiva?
+extern string InpHyperSymbols    = "CHFJPY+,EURCAD+,NZDUSD+";  // IPER: whitelist simboli (separati da virgola)
 
 extern bool   InpUseAI          = true;   // Usa AI per confermare i trade
 extern bool   InpSendFeedback   = true;   // Invia esiti al server (raccolta dati)
 extern int    InpAIMinConf      = 70;     // Confidenza AI minima % (50-95)
 
-extern double InpTPPercent      = 75.0;   // TP massimo (% ADR, trend forte)
-extern double InpTPPercentMin   = 45.0;   // TP minimo (% ADR, trend debole)
+extern double InpTPPercent      = 35.0;   // TP massimo (% ADR, trend forte) - MEDIANA WIN: 6.2 pips
+extern double InpTPPercentMin   = 20.0;   // TP minimo (% ADR, trend debole) - sotto = trade piccoli
 extern bool   InpTPAdaptive     = true;   // TP adattivo sulla forza del trend
-extern double InpMinRR          = 1.5;    // Rapporto Rischio/Rendimento minimo
+extern double InpMinRR          = 1.0;    // Rapporto Rischio/Rendimento minimo (abbassato per TP realistici)
 
 //=====================================================================
 //  >>>>>  IMPOSTAZIONI AVANZATE (di solito non serve toccarle)  <<<<<
@@ -137,7 +140,10 @@ extern bool   InpRevReqHistFlip = true;           // Reversal: richiedi cambio c
 extern int    InpRevMaxHistAge  = 3;              // Reversal: eta' max del cambio colore
 
 //=== SESSIONE ========================================================
-extern string _s7_              = "===== ORARI E SESSIONE =====";   // ----------
+extern string _s7_              = "===== ORARI E SESSIONE =====";
+extern bool   InpSessionFilterOn  = true;         // Filtro orario sessione attivo?
+extern int    InpSessionStartUTC  = 9;            // Ora inizio sessione (UTC)
+extern int    InpSessionEndUTC    = 14;           // Ora fine sessione (UTC)
 extern int    InpTimeOffset     = -1;             // Fuso orario broker vs Italia (ore)
 extern bool   InpNoNightTrade   = true;           // Blocca trading di notte (bassa liquidita')
 extern int    InpNightStartH    = 23;             // Notte: ora inizio blocco (ora Italia)
@@ -1335,6 +1341,13 @@ void ApplyAggressiveness()
       g_brkMinQuality      = 6;      // BREAKOUT: basta 6/8 (tutti -2)
       g_revMinQuality      = 3;      // REVERSAL: basta 3/5 (tutti -2)
    }
+   else if(InpAggressiveness == AGGR_IPERCONSERVATIVO)
+   {
+      //--- IPERCONSERVATIVO: usa i criteri della whitelist (6 filtri rigidi)
+      g_stdMinQuality      = 6;      // STANDARD: serve 6/6 (tutti)
+      g_brkMinQuality      = 8;      // BREAKOUT: tutti
+      g_revMinQuality      = 5;      // REVERSAL: tutti
+   }
    else
    {
       Print("  WARNING: Aggressivita' non valida. Uso Moderato.");
@@ -1351,6 +1364,7 @@ string AggressivenessStr()
       case AGGR_CONSERVATIVO:  return "CONSERVATIVO";
       case AGGR_MODERATO:      return "MODERATO";
       case AGGR_AGGRESSIVO:    return "AGGRESSIVO";
+      case AGGR_IPERCONSERVATIVO: return "IPERCONSERVATIVO";
       default:                 return "SCONOSCIUTO";
    }
 }
@@ -2223,10 +2237,72 @@ int GetTradeSlot()
 //+------------------------------------------------------------------+
 // |  STANDARD FILTERS                                                 |
 //+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
+// |  FILTRO IPERCONSERVATIVO — whitelist + 6 criteri rigidi         |
+// |  Attivo solo se InpHyperOn = true                               |
+// |  SE TUTTI 6 ✅ → APRI | SE ANCHE 1 ❌ → SALTA                   |
+//+------------------------------------------------------------------+
+bool CheckHyperConservative(int idx)
+{
+   //--- Criterio 1: simbolo nella whitelist
+   string sym = g_symbol[idx];
+   if(StringFind(InpHyperSymbols, sym) < 0)
+   {
+      Print("[IPER] ", sym, " SCARTATO: non in whitelist");
+      return false;
+   }
+
+   //--- Criterio 2: AI confidenza (se AI > 0, deve essere 80-89%)
+   if(g_aiLastConf > 0)
+   {
+      if(g_aiLastConf < 80 || g_aiLastConf > 89)
+      {
+         Print("[IPER] ", sym, " SCARTATO: AI conf=", g_aiLastConf, "% (serve 80-89%)");
+         return false;
+      }
+   }
+
+   //--- Criterio 3: ADX tra 25 e 60
+   if(g_adx[idx] < 25 || g_adx[idx] > 60)
+   {
+      Print("[IPER] ", sym, " SCARTATO: ADX=", DoubleToString(g_adx[idx], 1), " (serve 25-60)");
+      return false;
+   }
+
+   //--- Criterio 4: ADR% tra 50 e 150
+   if(g_adrPercent[idx] < 50 || g_adrPercent[idx] > 150)
+   {
+      Print("[IPER] ", sym, " SCARTATO: ADR%=", DoubleToString(g_adrPercent[idx], 1), " (serve 50-150)");
+      return false;
+   }
+
+   //--- Criterio 5: |RV| > 20
+   if(MathAbs(g_radarValue[idx]) <= 20)
+   {
+      Print("[IPER] ", sym, " SCARTATO: |RV|=", DoubleToString(MathAbs(g_radarValue[idx]), 1), " (serve >20)");
+      return false;
+   }
+
+   //--- Criterio 6: direction ≠ REV (gia' garantito: chiamato solo in STD)
+   // Questo filtro viene applicato SOLO in CheckStandardFilters, quindi module = STD
+
+   //--- Tutti i criteri passati
+   Print("[IPER] ", sym, " ✅ TUTTI 6 CRITERI PASSATI → TRADE APPROVATO");
+   return true;
+}
+
 bool CheckStandardFilters(int idx, int &qualityCount, string &details)
 {
    qualityCount = 0;
    details = "";
+
+   //=== MODALITA' IPERCONSERVATIVA: 6 criteri rigidi, bypassa filtri normali ===
+   if(InpHyperOn)
+   {
+      if(!CheckHyperConservative(idx)) return false;
+      // Se passa, procedi con l'apertura (tutto il resto e' bypassato)
+      return true;
+   }
 
    if(g_radarType[idx] != RT_LONG && g_radarType[idx] != RT_SHORT)
    {
@@ -2284,10 +2360,19 @@ bool CheckStandardFilters(int idx, int &qualityCount, string &details)
    else
       StringConcatenate(details, details, "ADR=" + DoubleToString(g_adrPercent[idx], 0) + "% ");
 
-   if(MathAbs(g_radarValue[idx]) < InpRV_Max)
+   //=== VETO COMBINATO RV+ADX: se entrambi alti → trend troppo maturo ===
+   // Dati: quando RV>=25 E ADX>=20, WR STD crolla al 20-24%
+   double stdRV = MathAbs(g_radarValue[idx]);
+   if(stdRV >= 25 && g_adx[idx] >= 20)
+   {
+      details = "VETO RV+ADX: RV=" + DoubleToString(stdRV, 0) + " ADX=" + DoubleToString(g_adx[idx], 0) + " (trend troppo maturo)";
+      return false;
+   }
+
+   if(stdRV < InpRV_Max)
       qualityCount++;
    else
-      StringConcatenate(details, details, "RV=" + DoubleToString(MathAbs(g_radarValue[idx]), 0) + " ");
+      StringConcatenate(details, details, "RV=" + DoubleToString(stdRV, 0) + " ");
    // EMA gap: piu' e' grande, piu' il trend e' definito
    if(emaGapAbs >= InpMinEMAGapPct * 2)
       qualityCount++;  // Gap doppio = trend forte
@@ -2314,6 +2399,18 @@ bool CheckStandardFilters(int idx, int &qualityCount, string &details)
       qualityCount++;
    else
       StringConcatenate(details, details, "Hist=" + HistStateStr(g_histogramState[idx]) + " ");
+
+   //=== BUY PENALTY: i BUY perdono molto di piu' dei SELL ===
+   // Dati: BUY -17€, SELL +6€. I BUY richiedono qualita' extra.
+   int buyMinQuality = 5;  // BUY serve 5/6
+   int sellMinQuality = 4; // SELL basta 4/6
+   int minQ = isLong ? buyMinQuality : sellMinQuality;
+   
+   if(qualityCount < minQ)
+   {
+      details = "QUALITY: " + IntegerToString(qualityCount) + "/" + (isLong ? "6 (BUY need 5)" : "6 (SELL need 4)") + " insufficiente";
+      return false;
+   }
 
    return true;
 }
@@ -2529,8 +2626,8 @@ double CalculateTP(string sym, double entryPrice, double slPrice, bool isLong, i
    if(pipResidui <= 0) return 0;
 
    //=== TP ADATTIVO: la % di ADR usata scala con la FORZA del segnale ===
-   //    Trend forte (RV sano + ADX alto) -> TP ambizioso (InpTPPercent)
-   //    Trend debole/esausto             -> TP modesto e raggiungibile (InpTPPercentMin)
+   //    Trend forte (RV sano + ADX alto) -> TP al 35% ADR (raggiungibile)
+   //    Trend debole/esausto             -> TP al 20% ADR (trade piccoli ma frequenti)
    double tpPercent = InpTPPercent;
    if(InpTPAdaptive)
    {
@@ -2589,6 +2686,11 @@ double GetLotSize(string sym)
    lots = NormalizeDouble(lots, 2);
    if(lots < minLot) lots = minLot;
    if(lots > maxLot) lots = maxLot;
+   
+   //=== LOT CAP: massimo 0.01 finche' WR < 50% ===
+   // Dati: WR 45% a 0.01, WR 25% a 0.02
+   if(lots > 0.01) lots = 0.01;
+   
    return lots;
 }
 
@@ -2654,6 +2756,19 @@ bool IsNightTime()
       return (h >= InpNightStartH || h < InpNightEndH);
    //--- Fascia normale (es. 1 -> 6)
    return (h >= InpNightStartH && h < InpNightEndH);
+}
+
+//+------------------------------------------------------------------+
+//|  FILTRO SESSIONE — blocca trade fuori orario europeo (UTC)       |
+//+------------------------------------------------------------------+
+bool IsSessionTime()
+{
+   if(!InpSessionFilterOn) return true;  // Filtro disattivato = sempre OK
+   int h = TimeHour(TimeCurrent());
+   // UTC del broker potrebbe essere diverso, ma usiamo TimeCurrent() come riferimento
+   if(h >= InpSessionStartUTC && h < InpSessionEndUTC)
+      return true;
+   return false;
 }
 
 bool MarketOpen(string sym)
@@ -3219,10 +3334,18 @@ void ProcessReversal()
       else if(hist == HS_GREEN_LIGHT || hist == HS_RED_LIGHT)
       {
          // Prima candela LIGHT dopo GRAY = momento dell'entrata
-         if(g_histBarsSinceGray[i] <= 1)
+         // HARD LIMIT: se sono passate troppe candele dal GRAY, scarta
+         if(g_histBarsSinceGray[i] > 3)
+         {
+            StringConcatenate(details, details, "Hist=" + HistStateStr(hist) + " (too late, " + IntegerToString(g_histBarsSinceGray[i]) + " bars>3) ");
+         }
+         else if(g_histBarsSinceGray[i] <= 1)
             histOK = true;
          else
-            StringConcatenate(details, details, "Hist=" + HistStateStr(hist) + " (too late, " + IntegerToString(g_histBarsSinceGray[i]) + " bars) ");
+         {
+            // 2-3 bars = margine accettabile ma con warning
+            histOK = true;
+         }
       }
       
       if(histOK) qCount++;
@@ -3448,6 +3571,7 @@ bool TryOpenTrade(int idx, int origin, double minRR)
 
    if(!SpreadOK(sym))        { Print("[TRY] ", sym, " BLOCCATO: spread troppo alto"); return false; }
    if(!MarketOpen(sym))      { Print("[TRY] ", sym, " BLOCCATO: mercato chiuso"); return false; }
+   if(!IsSessionTime())      { Print("[TRY] ", sym, " BLOCCATO: fuori sessione (", InpSessionStartUTC, "-", InpSessionEndUTC, " UTC)"); return false; }
    if(HasOpenPosition(sym))  { Print("[TRY] ", sym, " BLOCCATO: posizione già aperta"); return false; }
    // doppia esposizione rimossa
 
