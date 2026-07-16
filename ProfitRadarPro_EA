@@ -30,7 +30,10 @@ enum ENUM_AGGR
 //=====================================================================
 extern string _MAIN_           = "===== IMPOSTAZIONI PRINCIPALI =====";   // ----------
 
-extern double InpFixedLots      = 0.01;   // Lotto per ogni trade
+extern double InpFixedLots      = 0.01;   // Lotto base per ogni trade
+extern double InpMaxLotsCap     = 0.05;   // Lotto massimo assoluto (safety)
+extern bool   InpDynamicLotsOn  = false;  // Lotto dinamico in base al win rate?
+extern int    InpDynamicLookback = 20;    // Trade passati per calcolare win rate
 extern int    InpMaxConcurrent  = 10;     // Max trade aperti insieme
 extern bool   InpDailyStopOn    = true;   // Daily Stop attivo? (no=non si ferma mai)
 extern int    InpMaxConsecLoss  = 2;      // Stop dopo quante perdite di fila
@@ -48,6 +51,16 @@ extern double InpTPPercent      = 35.0;   // TP massimo (% ADR, trend forte) - M
 extern double InpTPPercentMin   = 20.0;   // TP minimo (% ADR, trend debole) - sotto = trade piccoli
 extern bool   InpTPAdaptive     = true;   // TP adattivo sulla forza del trend
 extern double InpMinRR          = 1.0;    // Rapporto Rischio/Rendimento minimo (abbassato per TP realistici)
+
+//--- Filtri derivati dall'analisi TradeLog (200 trade)
+//    Ora le fasce a rischio (venerdi / pomeriggio) usano un lotto ridotto.
+//    0.00 = fascia chiusa, 0.01 = trade attivo con lotto ridotto.
+extern double InpFridayLots     = 0.01;   // Lotto venerdi: 0=chiuso, 0.01=trade ridotto
+extern double InpAfternoonLots  = 0.01;   // Lotto pomeriggio (fuori sessione 9-14 UTC): 0=chiuso, 0.01=ridotto
+extern bool   InpNoMondayTrade  = false;  // NO trade di lunedi (dati: -2.63, WR 36% — cautela)
+extern bool   InpNoBUY          = false;  // NO trade BUY (dati: BUY -24, SELL -1.4)
+extern string InpSymbolBlacklist = "";    // Simboli da escludere (es. "GBPAUD+,AUDJPY+")
+extern double InpMaxLotsSafety  = 0.05;   // Lotto max di sicurezza (protezione outlier)
 
 //=====================================================================
 //  >>>>>  IMPOSTAZIONI AVANZATE (di solito non serve toccarle)  <<<<<
@@ -81,8 +94,11 @@ extern int    InpMaxPerPair     = 1;              // Max trade per ogni coppia
 extern string _s3_              = "===== PARAMETRI TRADE =====";   // ----------
 extern int    InpBEPips         = 15;             // Break-Even: pip di profitto per attivarlo
 extern int    InpBEProfit       = 5;              // Break-Even: pip di profitto bloccati
-extern double InpTrailActivate  = 0.8;            // Trailing: attiva a quante R di profitto
-extern double InpTrailATRMult   = 0.2;            // Trailing: distanza = EMA21 - ATR x questo
+extern bool   InpTrailingOn     = true;           // Trailing stop attivo?
+extern double InpTrailActivate  = 1.5;            // Trailing: attiva a quante R di profitto (era 0.8 -> troppo presto)
+extern double InpTrailATRMult   = 0.5;            // Trailing: distanza = ATR x questo (era 0.2 -> troppo stretto)
+extern int    InpTrailStepPips  = 5;              // Trailing: muovi SL solo se migliora di almeno X pip (0=sempre)
+extern int    InpMaxTPPips      = 0;              // TP massimo in pip (0=usa TP% ADR come ora)
 extern int    InpMagicNumber    = 270101;         // Magic Number (ID univoco EA)
 extern int    InpMaxSlippage    = 3;              // Slippage massimo (points)
 extern int    InpMaxSpread      = 30;             // Spread massimo assoluto (points)
@@ -645,7 +661,10 @@ int OnInit()
       Print("  >>> CSV NON TROVATO! MQL4/Files/", InpCSVFile, " <<<");
    }
 
-   Print("  Venerdi: NO nuovi trade dalle 15:00 Italia");
+   Print("  Venerdi: lotto ", DoubleToString(InpFridayLots, 2),
+         (InpFridayLots > 0.0 ? " (trade ridotto fino alle 22:30 Italia)" : " (CHIUSO)"));
+   Print("  Pomeriggio: lotto ", DoubleToString(InpAfternoonLots, 2),
+         (InpAfternoonLots > 0.0 ? " (fuori sessione principale, trade ridotto)" : " (CHIUSO)"));
 
    if(InpSundayStartH > 0 && InpSundayStartH < 24)
       Print("  Domenica: trading attivo dalle ", PadZero(InpSundayStartH), ":00 Italia");
@@ -2226,9 +2245,11 @@ bool IsFridayLossClose()
 int GetTradeSlot()
 {
    if(IsWeekend())       return 0;
-   if(IsFridayEvening()) return 0;
-   //--- Venerdi dopo le 15:00 Italia: NO nuovi trade
-   if(GetItalyDayOfWeek() == 5 && GetItalyHour() >= 15) return 0;
+   if(IsFridayEvening()) return 0;  // chiusura forzata venerdi sera (ore 22:30 Italia)
+   //--- Lunedi: NO nuovi trade (dati TradeLog: -2.63 EUR, WR 36%)
+   if(InpNoMondayTrade && GetItalyDayOfWeek() == 1) return 0;
+   //--- Venerdi: se il lotto venerdi e' 0.00, nessun nuovo trade
+   if(InpFridayLots <= 0 && GetItalyDayOfWeek() == 5) return 0;
    //--- Blocco notturno (bassa liquidita', spread larghi)
    if(IsNightTime()) return 0;
    return 1;
@@ -2300,7 +2321,9 @@ bool CheckStandardFilters(int idx, int &qualityCount, string &details)
    if(InpHyperOn)
    {
       if(!CheckHyperConservative(idx)) return false;
-      // Se passa, procedi con l'apertura (tutto il resto e' bypassato)
+      // Se passa, forza qualityCount al massimo cosi' ProcessStandard non lo scarta
+      // (altrimenti qualityCount rimane 0 e il trade viene bloccato dal filtro aggressivita')
+      qualityCount = 99;
       return true;
    }
 
@@ -2654,6 +2677,14 @@ double CalculateTP(string sym, double entryPrice, double slPrice, bool isLong, i
    }
 
    double tpPips = pipResidui * (tpPercent / 100.0);
+   
+   //--- TP massimo assoluto in pip (protezione contro TP troppo alto)
+   if(InpMaxTPPips > 0 && tpPips > InpMaxTPPips)
+   {
+      Print("[TP] ", sym, " TP limitato: calcolato ", DoubleToString(tpPips,1), " pip -> max ", InpMaxTPPips, " pip");
+      tpPips = InpMaxTPPips;
+   }
+   
    double tpDistance = tpPips * pipSize;  // ← FIX: pipSize invece di point
    double slDistance = MathAbs(entryPrice - slPrice);
    if(slDistance <= 0) return 0;
@@ -2676,21 +2707,103 @@ double CalculateTP(string sym, double entryPrice, double slPrice, bool isLong, i
 //+------------------------------------------------------------------+
 // |  LOT SIZE                                                         |
 //+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
+// |  WIN RATE RECENTE DA TRADELOG (per lotto dinamico)               |
+//+------------------------------------------------------------------+
+double GetRecentWinRate(int lookback)
+{
+   int handle = FileOpen("PRP_TradeLog.csv", FILE_CSV | FILE_READ | FILE_ANSI, ';');
+   if(handle == INVALID_HANDLE) return 0.5;  // default neutro
+
+   int total = 0, wins = 0;
+   bool firstLine = true;
+   string rows[];
+   int rowCount = 0;
+
+   while(!FileIsEnding(handle))
+   {
+      string line = FileReadString(handle);
+      if(firstLine) { firstLine = false; continue; }
+      if(StringLen(line) < 5) continue;
+      if(rowCount >= ArraySize(rows)) ArrayResize(rows, rowCount + 100);
+      rows[rowCount++] = line;
+   }
+   FileClose(handle);
+
+   int start = MathMax(0, rowCount - lookback);
+   for(int i = start; i < rowCount; i++)
+   {
+      // Estrai colonna Won (11° campo, indice 10)
+      string parts[];
+      int n = StringSplit(rows[i], ';', parts);
+      if(n < 12) continue;
+      string wonStr = parts[10];
+      total++;
+      if(StringFind(wonStr, "true") >= 0 || wonStr == "1") wins++;
+   }
+
+   if(total == 0) return 0.5;
+   return (double)wins / (double)total;
+}
+
+//+------------------------------------------------------------------+
+// |  LOT SIZE                                                         |
+//+------------------------------------------------------------------+
 double GetLotSize(string sym)
 {
    double minLot  = MarketInfo(sym, MODE_MINLOT);
    double maxLot  = MarketInfo(sym, MODE_MAXLOT);
    double lotStep = MarketInfo(sym, MODE_LOTSTEP);
    double lots = InpFixedLots;
+
+   //--- Fasce orarie a rischio: usa il lotto ridotto (il MINORE tra quelle attive)
+   //    Venerdi (fino alla chiusura forzata) e pomeriggio (fuori sessione principale)
+   int italyDow = GetItalyDayOfWeek();
+   bool isFriday = (italyDow == 5);
+   bool isAfternoon = !IsSessionTime();  // fuori dalla sessione principale = pomeriggio
+   double specialLot = -1.0;
+   if(isFriday && !IsFridayEvening() && InpFridayLots > 0.0)
+      specialLot = InpFridayLots;
+   if(isAfternoon && InpAfternoonLots > 0.0)
+   {
+      if(specialLot < 0.0 || InpAfternoonLots < specialLot)
+         specialLot = InpAfternoonLots;
+   }
+   if(specialLot >= 0.0)
+   {
+      lots = specialLot;
+      Print("[LOT-FASCIA] ", sym, " usa lotto ridotto ", DoubleToString(lots, 2),
+            (isFriday ? " (Venerdi)" : ""), (isAfternoon ? " (Pomeriggio)" : ""));
+   }
+
+   //--- Lotto dinamico: scala in base al win rate delle ultime N operazioni
+   if(InpDynamicLotsOn)
+   {
+      double wr = GetRecentWinRate(InpDynamicLookback);
+      if(wr >= 0.55)
+         lots = InpFixedLots;                 // WR alto -> lotto pieno
+      else if(wr >= 0.45)
+         lots = InpFixedLots * 0.7;            // WR medio -> ridotto
+      else if(wr >= 0.35)
+         lots = InpFixedLots * 0.5;            // WR basso -> dimezzato
+      else
+         lots = InpFixedLots * 0.3;            // WR molto basso -> minimo
+
+      Print("[LOT-DYN] WR recente ", DoubleToString(wr*100,1), "% -> lotto ", DoubleToString(lots, 2));
+   }
+
    lots = MathFloor(lots / lotStep) * lotStep;
    lots = NormalizeDouble(lots, 2);
    if(lots < minLot) lots = minLot;
    if(lots > maxLot) lots = maxLot;
-   
-   //=== LOT CAP: massimo 0.01 finche' WR < 50% ===
-   // Dati: WR 45% a 0.01, WR 25% a 0.02
-   if(lots > 0.01) lots = 0.01;
-   
+
+   //--- Safety cap: non supera mai InpMaxLotsCap
+   if(InpMaxLotsCap > 0 && lots > InpMaxLotsCap)
+   {
+      Print("[LOT-CAP] ", sym, " lotto ", DoubleToString(lots,2), " ridotto a max ", DoubleToString(InpMaxLotsCap,2));
+      lots = InpMaxLotsCap;
+   }
+
    return lots;
 }
 
@@ -3452,6 +3565,20 @@ void ProcessReversal()
       bool revIsLong = (g_radarValue[idx] < 0);
       string revSym = g_symbol[idx];
 
+      //--- Filtro NO BUY anche per Reversal
+      if(InpNoBUY && revIsLong)
+      {
+         Print("[REV] ", revSym, " BLOCCATO: filtro NO BUY attivo");
+         continue;
+      }
+
+      //--- Blacklist simboli anche per Reversal
+      if(InpSymbolBlacklist != "" && StringFind(InpSymbolBlacklist, revSym) >= 0)
+      {
+         Print("[REV] ", revSym, " BLOCCATO: simbolo in blacklist");
+         continue;
+      }
+
       double revSL = CalculateATR_SL(revSym, revIsLong);
       double revEntry = revIsLong ? MarketInfo(revSym, MODE_ASK) : MarketInfo(revSym, MODE_BID);
 
@@ -3569,9 +3696,34 @@ bool TryOpenTrade(int idx, int origin, double minRR)
 
    Print("[TRY] ", sym, " ", tag, " ", (isLong ? "BUY" : "SELL"), " | RV=", DoubleToString(g_radarValue[idx],1), " ADX=", DoubleToString(g_adx[idx],1), " ADR%=", DoubleToString(g_adrPercent[idx],1));
 
+   //--- Filtro NO BUY (dati TradeLog: BUY -24, SELL -1.4)
+   if(InpNoBUY && isLong)
+   {
+      Print("[TRY] ", sym, " BLOCCATO: filtro NO BUY attivo");
+      return false;
+   }
+
+   //--- Blacklist simboli
+   if(InpSymbolBlacklist != "")
+   {
+      if(StringFind(InpSymbolBlacklist, sym) >= 0)
+      {
+         Print("[TRY] ", sym, " BLOCCATO: simbolo in blacklist");
+         return false;
+      }
+   }
+
    if(!SpreadOK(sym))        { Print("[TRY] ", sym, " BLOCCATO: spread troppo alto"); return false; }
    if(!MarketOpen(sym))      { Print("[TRY] ", sym, " BLOCCATO: mercato chiuso"); return false; }
-   if(!IsSessionTime())      { Print("[TRY] ", sym, " BLOCCATO: fuori sessione (", InpSessionStartUTC, "-", InpSessionEndUTC, " UTC)"); return false; }
+   //--- Fuori sessione principale = pomeriggio. Se il lotto pomeriggio e' 0.00, blocca.
+   if(!IsSessionTime())
+   {
+      if(InpAfternoonLots <= 0)
+      {
+         Print("[TRY] ", sym, " BLOCCATO: pomeriggio disattivato (sessione ", InpSessionStartUTC, "-", InpSessionEndUTC, " UTC)");
+         return false;
+      }
+   }
    if(HasOpenPosition(sym))  { Print("[TRY] ", sym, " BLOCCATO: posizione già aperta"); return false; }
    // doppia esposizione rimossa
 
@@ -3617,6 +3769,14 @@ bool TryOpenTrade(int idx, int origin, double minRR)
 
    double lots = GetLotSize(sym);
    if(lots <= 0) { Print("[TRY] ", sym, " BLOCCATO: lots=0"); return false; }
+   //--- SAFETY LOTTO: protezione contro outlier/errori manuali (es. 1.00 lot)
+   if(lots > InpMaxLotsSafety)
+   {
+      Print("[TRY] ", sym, " BLOCCATO: lots=", DoubleToString(lots, 2),
+            " > safety max ", DoubleToString(InpMaxLotsSafety, 2),
+            " (protezione outlier)");
+      return false;
+   }
 
    double rr = MathAbs(tpPrice - entryPrice) / MathAbs(entryPrice - slPrice);
 
@@ -3813,10 +3973,12 @@ void ManageOpenTrades()
       }
 
       //=== TRAILING EMA21 + ATR ===
+      if(!InpTrailingOn) continue;
       if(R <= 0) continue;
 
       double profitDistance = 0;
       double originalR = MathAbs(entry - curSL);
+      double pipSizeStep = InpTrailStepPips * point * pipMult;  // distanza minima per muovere SL
 
       if(isLong)
          profitDistance = bid - entry;
@@ -3839,7 +4001,7 @@ void ManageOpenTrades()
             if(isLong)
             {
                newSL = NormalizeDouble(ema - (InpTrailATRMult * atr), digits);
-               if(newSL > curSL && (bid - newSL) > (stopLevel + point))
+               if(newSL > curSL && (newSL - curSL) >= pipSizeStep && (bid - newSL) > (stopLevel + point))
                {
                   if(OrderModify(ticket, entry, newSL, curTP, 0, clrGreen))
                      Print("[TRAIL] ", sym, " #", ticket, " BUY SL -> ", DoubleToString(newSL, digits));
@@ -3848,7 +4010,7 @@ void ManageOpenTrades()
             else
             {
                newSL = NormalizeDouble(ema + (InpTrailATRMult * atr), digits);
-               if(newSL < curSL && (newSL - ask) > (stopLevel + point))
+               if(newSL < curSL && (curSL - newSL) >= pipSizeStep && (newSL - ask) > (stopLevel + point))
                {
                   if(OrderModify(ticket, entry, newSL, curTP, 0, clrRed))
                      Print("[TRAIL] ", sym, " #", ticket, " SELL SL -> ", DoubleToString(newSL, digits));
@@ -4241,7 +4403,7 @@ bool CanTrade()
 //+------------------------------------------------------------------+
 // |  DASHBOARD                                                        |
 //+------------------------------------------------------------------+
-#define DASH_LINES  44
+#define DASH_LINES  20
 #define DASH_PREFIX "PRP_D_"
 
 //--- Barra ASCII per valori interi (es. loss di fila 1/2 -> [#-])
@@ -4282,8 +4444,11 @@ void ShowDashboard()
 
    lines[line++] = "===================================";
    lines[line++] = "  PROFIT RADAR PRO v" + VERSION_STR;
-   lines[line++] = "  Stile: " + AggressivenessStr() +
-                   " (STD " + IntegerToString(g_stdMinQuality) + "/4)";
+   string stileLine = "  Stile: " + AggressivenessStr();
+   if(InpHyperOn) stileLine += " +HYPER";
+   if(InpAggressiveness != AGGR_IPERCONSERVATIVO)
+      stileLine += " (STD " + IntegerToString(g_stdMinQuality) + "/4)";
+   lines[line++] = stileLine;
    lines[line++] = "===================================";
 
    int h = GetItalyHour();
@@ -4302,112 +4467,46 @@ void ShowDashboard()
    string slotStr = (slot == 1) ? ">> ATTIVO" : "|| CHIUSO";
    lines[line++] = dayName + " " + PadZero(h) + ":" + PadZero(m) + " | " + slotStr;
 
-   //=== SEZIONE CONTO =================================================
-   lines[line++] = "--- CONTO ---";
-   lines[line++] = "Balance: " + DoubleToString(AccountBalance(), 2) + " EUR";
-   lines[line++] = "Equity:  " + DoubleToString(AccountEquity(), 2) + " EUR";
-   lines[line++] = "Trade: " + IntegerToString(CountOpenPositions()) + "/" + IntegerToString(InpMaxConcurrent) +
-                   " | Lotto: " + DoubleToString(InpFixedLots, 2);
+   //=== CONTO & TRADE =================================================
+   lines[line++] = "B/E: " + DoubleToString(AccountBalance(), 2) + "/" +
+                   DoubleToString(AccountEquity(), 2) + " EUR";
+   string lotInfo = "Lotto: " + DoubleToString(InpFixedLots, 2);
+   int dashDow = GetItalyDayOfWeek();
+   if(dashDow == 5 && InpFridayLots > 0.0 && !IsFridayEvening())
+      lotInfo += " | Ven " + DoubleToString(InpFridayLots, 2);
+   else if(!IsSessionTime() && InpAfternoonLots > 0.0)
+      lotInfo += " | Pome " + DoubleToString(InpAfternoonLots, 2);
+   lines[line++] = "Open: " + IntegerToString(CountOpenPositions()) + "/" +
+                   IntegerToString(InpMaxConcurrent) + " | " + lotInfo;
 
-   //=== SEZIONE GIORNATA =============================================
-   lines[line++] = "--- GIORNATA ---";
+   //=== GIORNATA ======================================================
    double dailyPnL = AccountBalance() - g_dailyStartBalance;
    string sign = (dailyPnL >= 0) ? "+" : "";
-   lines[line++] = "PnL oggi: " + sign + DoubleToString(dailyPnL, 2) + " EUR";
-   lines[line++] = "Vinti: +" + DoubleToString(g_dailyWinAmount, 2) + " EUR (" + IntegerToString(g_dailyWins) + ")" +
-                   " | Persi: -" + DoubleToString(g_dailyLossAmount, 2) + " EUR (" + IntegerToString(g_dailyLosses) + ")";
+   lines[line++] = "PnL: " + sign + DoubleToString(dailyPnL, 2) + " EUR";
+   lines[line++] = "W/L: " + IntegerToString(g_dailyWins) + "/" + IntegerToString(g_dailyLosses) +
+                   " | Loss fila: " + IntegerToString(g_consecutiveLosses) + "/" + IntegerToString(InpMaxConsecLoss);
 
-   //--- Safety: perdite consecutive (con barra)
-   lines[line++] = "Loss di fila: " + IntegerToString(g_consecutiveLosses) + "/" + IntegerToString(InpMaxConsecLoss) +
-                   "  " + MakeBar(g_consecutiveLosses, InpMaxConsecLoss);
-
-   //--- Stop W/L pesato: barra di margine + testo dettaglio
+   //--- Stop W/L pesato
    double lossLimit = g_dailyWinAmount * InpLossWeight;
    if(lossLimit > 0.0)
-   {
-      lines[line++] = "Stop W/L (x" + DoubleToString(InpLossWeight, 1) + "): " +
-                      MakeBarPct(g_dailyLossAmount, lossLimit);
-      double margine = lossLimit - g_dailyLossAmount;
-      lines[line++] = "  persi " + DoubleToString(g_dailyLossAmount, 2) +
-                      " / soglia " + DoubleToString(lossLimit, 2) + " EUR" +
-                      " | margine " + DoubleToString(margine, 2);
-   }
+      lines[line++] = "Stop: " + MakeBarPct(g_dailyLossAmount, lossLimit);
    else
-   {
-      lines[line++] = "Stop W/L (x" + DoubleToString(InpLossWeight, 1) + "): in attesa 1a vincita";
-      lines[line++] = "  (per ora vale solo lo stop loss di fila)";
-   }
+      lines[line++] = "Stop: in attesa 1a vincita";
 
-   //=== SEZIONE FILTRI ===============================================
-   lines[line++] = "--- FILTRI (servono / totali) ---";
-   lines[line++] = "STD " + IntegerToString(g_stdMinQuality) + "/4" +
-                   " | BRK " + IntegerToString(g_brkMinQuality) + "/8" +
-                   " | REV " + IntegerToString(g_revMinQuality) + "/5";
-   lines[line++] = "Valori: RV<" + IntegerToString(InpRV_Max) +
-                   " ADR<" + DoubleToString(InpADR_Max, 0) + "%" +
-                   " | RR>" + DoubleToString(InpMinRR, 1);
-   lines[line++] = "Data: " + g_activeDataSource + " | Off: " + IntegerToString(InpTimeOffset) + "h";
-
-   if(dow == 5 && h >= 15)
-      lines[line++] = "!! VENERDI: NO NUOVI TRADE !!";
-
-   //=== SEZIONE AI ===================================================
-   lines[line++] = "--- AI ---";
-   if(InpUseAI)
-   {
-      lines[line++] = "AI: ON | Conf min: " + IntegerToString(InpAIMinConf) + "%";
-      lines[line++] = "Conf: " + IntegerToString(g_aiConfirm) +
-                      "/" + IntegerToString(g_aiCalls) +
-                      " | Rej: " + IntegerToString(g_aiReject) +
-                      " | Err: " + IntegerToString(g_aiErrors);
-
-      //--- Warm-up status
-      string warmupStr = (g_warmupOK ? "OK" : "OFF");
-      if(g_warmupLastTime > 0)
-      {
-         int secsAgo = (int)(TimeCurrent() - g_warmupLastTime);
-         warmupStr = warmupStr + " " + IntegerToString(secsAgo / 60) + "m fa";
-      }
-      lines[line++] = "Warmup: " + warmupStr +
-                      " | OK:" + IntegerToString(g_warmupTotalOK) +
-                      " Fail:" + IntegerToString(g_warmupTotalFail);
-
-      //--- Trade persi per timeout
-      if(g_aiMissedTrades > 0)
-         lines[line++] = "!! TRADE PERSI: " + IntegerToString(g_aiMissedTrades) +
-                         " !! Ultimo: " + g_aiMissedLastSymbol;
-
-      //--- A/B Test GPT
-      if(g_abGptCalls > 0)
-         lines[line++] = "AB: " + IntegerToString(g_abGptCalls) + " test" +
-                         " | LG/GPT: " + IntegerToString(g_abGptAgree) + "/" + IntegerToString(g_abGptDisagree) +
-                         " agree";
-
-      lines[line++] = "AI Feedback: " + IntegerToString(g_fbSentCount) +
-                      " inviati | " + IntegerToString(g_fbCount) + " track";
-      if(g_aiLastSignal != "")
-         lines[line++] = "AI Last: " + g_aiLastSignal + " " + IntegerToString(g_aiLastConf) + "%";
-   }
-   else
-   {
-      lines[line++] = "AI: OFF";
-   }
-
-   //=== SEZIONE DATI / STATO =========================================
-   lines[line++] = "--- DATI ---";
+   //=== STATO SISTEMA =================================================
+   lines[line++] = "AI: " + (InpUseAI ? "ON" : "OFF") +
+                   " | Feed: " + (InpSendFeedback ? "ON" : "OFF") +
+                   " | Trail: " + (InpTrailingOn ? "ON" : "OFF");
    if(g_dataCount > 0)
       lines[line++] = "Cross: " + IntegerToString(g_dataCount) + "/28" +
-                   (g_dataValidated ? " | non-gray: " + IntegerToString(g_nonGrayCount) : "");
-   if(!g_dataValidated) lines[line++] = "!! DATI NON VALIDATI !!";
+                      (g_dataValidated ? " | ng:" + IntegerToString(g_nonGrayCount) : "");
+   if(!g_dataValidated)
+      lines[line++] = "!! DATI NON VALIDATI !!";
 
    if(g_dailyStopped)
    {
       lines[line++] = "===================================";
       lines[line++] = "  !!!  DAILY STOP ATTIVO  !!!";
-      if(g_consecutiveLosses >= InpMaxConsecLoss)
-         lines[line++] = "  Motivo: " + IntegerToString(g_consecutiveLosses) + " perdite di fila";
-      else
-         lines[line++] = "  Motivo: perdite > vincite x" + DoubleToString(InpLossWeight, 1);
    }
 
    lines[line++] = "===================================";
@@ -4673,166 +4772,2546 @@ void SyncWithServer()
    Print("[SYNC] ✅ OK! EA status sincronizzato (sync #", syncCount, ")");
 
    //--- Estrai aggressiveness
-   int aggrPos = StringFind(respStr, "\"aggressiveness\"", cfgPos);
-   if(aggrPos >= 0)
+   int pos_aggressiveness = StringFind(respStr, "\"aggressiveness\"", cfgPos);
+   if(pos_aggressiveness >= 0)
    {
-      int colonP = StringFind(respStr, ":", aggrPos);
-      if(colonP >= 0)
-      {
-         string numStr = "";
-         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 10; c++)
-         {
-            string ch = StringSubstr(respStr, c, 1);
-            if(ch >= "0" && ch <= "9") numStr += ch;
-            else if(StringLen(numStr) > 0) break;
-         }
-         if(StringLen(numStr) > 0)
-         {
-            int newAggr = (int)StringToDouble(numStr);
-            if(newAggr >= 1 && newAggr <= 3 && newAggr != (int)InpAggressiveness)
-            {
-               InpAggressiveness = (ENUM_AGGR)newAggr;
-               ApplyAggressiveness();
-               Print("[SYNC] Aggressivita' cambiata da dashboard: ", newAggr);
-            }
-         }
-      }
-   }
-
-   //--- Estrai AI min conf
-   int confPos = StringFind(respStr, "\"ai_min_conf\"", cfgPos);
-   if(confPos >= 0)
-   {
-      int colonP = StringFind(respStr, ":", confPos);
-      if(colonP >= 0)
-      {
-         string numStr = "";
-         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 10; c++)
-         {
-            string ch = StringSubstr(respStr, c, 1);
-            if(ch >= "0" && ch <= "9") numStr += ch;
-            else if(StringLen(numStr) > 0) break;
-         }
-         if(StringLen(numStr) > 0)
-         {
-            int newConf = (int)StringToDouble(numStr);
-            if(newConf >= 50 && newConf <= 95 && newConf != InpAIMinConf)
-            {
-               InpAIMinConf = newConf;
-               Print("[SYNC] AI confidenza minima: ", newConf, "%");
-            }
-         }
-      }
-   }
-
-   //--- Estrai use_ai
-   int useAiPos = StringFind(respStr, "\"use_ai\"", cfgPos);
-   if(useAiPos >= 0)
-   {
-      int colonP = StringFind(respStr, ":", useAiPos);
-      if(colonP >= 0)
-      {
-         string valStr = StringSubstr(respStr, colonP + 1, 6);
-         bool newUseAI = (StringFind(valStr, "true") >= 0);
-         if(newUseAI != InpUseAI)
-         {
-            InpUseAI = newUseAI;
-            Print("[SYNC] AI ", (newUseAI ? "ATTIVATA" : "DISATTIVATA"), " da dashboard");
-         }
-      }
-   }
-
-   //--- Estrai reversal_on
-   int revPos = StringFind(respStr, "\"reversal_on\"", cfgPos);
-   if(revPos >= 0)
-   {
-      int colonP = StringFind(respStr, ":", revPos);
-      if(colonP >= 0)
-      {
-         string valStr = StringSubstr(respStr, colonP + 1, 6);
-         bool newRev = (StringFind(valStr, "true") >= 0);
-         if(newRev != InpReversalOn)
-         {
-            InpReversalOn = newRev;
-            Print("[SYNC] Reversal ", (newRev ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
-         }
-      }
-   }
-
-   //--- Estrai breakout_on
-   int brkPos = StringFind(respStr, "\"breakout_on\"", cfgPos);
-   if(brkPos >= 0)
-   {
-      int colonP = StringFind(respStr, ":", brkPos);
-      if(colonP >= 0)
-      {
-         string valStr = StringSubstr(respStr, colonP + 1, 6);
-         bool newBrk = (StringFind(valStr, "true") >= 0);
-         if(newBrk != InpBreakoutOn)
-         {
-            InpBreakoutOn = newBrk;
-            Print("[SYNC] Breakout ", (newBrk ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
-         }
-      }
-   }
-
-   //--- Estrai loss_weight (peso perdite vs vincite, es: "1.5")
-   int lwPos = StringFind(respStr, "\"loss_weight\"", cfgPos);
-   if(lwPos >= 0)
-   {
-      int colonP = StringFind(respStr, ":", lwPos);
+      int colonP = StringFind(respStr, ":", pos_aggressiveness);
       if(colonP >= 0)
       {
          string numStr = "";
          for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
          {
             string ch = StringSubstr(respStr, c, 1);
-            if((ch >= "0" && ch <= "9") || ch == ".") numStr += ch;
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
             else if(StringLen(numStr) > 0) break;
          }
          if(StringLen(numStr) > 0)
          {
-            double newLW = StringToDouble(numStr);
-            if(newLW >= 1.0 && newLW <= 5.0 && MathAbs(newLW - InpLossWeight) > 0.001)
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpAggressiveness)
             {
-               InpLossWeight = newLW;
-               Print("[SYNC] Loss weight da dashboard: ", DoubleToString(newLW, 1));
-               //--- Se il daily stop era attivo, ricalcola se va rimosso
-               //    con la nuova soglia W/L pesata
-               if(g_dailyStopped && g_dailyWinAmount > 0.0)
-               {
-                  double lossThreshold = g_dailyWinAmount * InpLossWeight;
-                  if(g_dailyLossAmount <= lossThreshold)
-                  {
-                     g_dailyStopped = false;
-                     Print("[SYNC] Daily stop RIMOSSO — perse ", DoubleToString(g_dailyLossAmount, 2),
-                           "€ <= soglia ", DoubleToString(lossThreshold, 2), "€");
-                  }
-               }
+               InpAggressiveness = (ENUM_AGGR)newVal;
+               Print("[SYNC] Aggressivita' da dashboard: ", newVal);
             }
          }
       }
    }
 
-   //--- Estrai daily_stop_on (interruttore ON/OFF del daily stop dalla dashboard)
-   int dsPos = StringFind(respStr, "\"daily_stop_on\"", cfgPos);
-   if(dsPos >= 0)
+   //--- Estrai use_ai
+   int pos_use_ai = StringFind(respStr, "\"use_ai\"", cfgPos);
+   if(pos_use_ai >= 0)
    {
-      int colonP = StringFind(respStr, ":", dsPos);
+      int colonP = StringFind(respStr, ":", pos_use_ai);
       if(colonP >= 0)
       {
          string valStr = StringSubstr(respStr, colonP + 1, 6);
-         bool newDS = (StringFind(valStr, "true") >= 0);
-         if(newDS != InpDailyStopOn)
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpUseAI)
          {
-            InpDailyStopOn = newDS;
-            Print("[SYNC] Daily Stop ", (newDS ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
-            //--- Se appena disattivato, sblocca subito un eventuale stop attivo
-            if(!newDS && g_dailyStopped)
+            InpUseAI = newVal;
+            Print("[SYNC] AI ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai ai_min_conf
+   int pos_ai_min_conf = StringFind(respStr, "\"ai_min_conf\"", cfgPos);
+   if(pos_ai_min_conf >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_ai_min_conf);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpAIMinConf)
             {
-               g_dailyStopped = false;
-               Print("[SYNC] Daily stop forzato OFF -> trading riattivato");
+               InpAIMinConf = newVal;
+               Print("[SYNC] AI confidenza minima da dashboard: ", newVal);
             }
+         }
+      }
+   }
+
+   //--- Estrai send_feedback
+   int pos_send_feedback = StringFind(respStr, "\"send_feedback\"", cfgPos);
+   if(pos_send_feedback >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_send_feedback);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpSendFeedback)
+         {
+            InpSendFeedback = newVal;
+            Print("[SYNC] Send feedback ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai daily_stop_on
+   int pos_daily_stop_on = StringFind(respStr, "\"daily_stop_on\"", cfgPos);
+   if(pos_daily_stop_on >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_daily_stop_on);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpDailyStopOn)
+         {
+            InpDailyStopOn = newVal;
+            Print("[SYNC] Daily Stop ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai max_consec_loss
+   int pos_max_consec_loss = StringFind(respStr, "\"max_consec_loss\"", cfgPos);
+   if(pos_max_consec_loss >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_max_consec_loss);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpMaxConsecLoss)
+            {
+               InpMaxConsecLoss = newVal;
+               Print("[SYNC] Max loss consecutivi da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai loss_weight
+   int pos_loss_weight = StringFind(respStr, "\"loss_weight\"", cfgPos);
+   if(pos_loss_weight >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_loss_weight);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if((ch >= "0" && ch <= "9") || ch == "." || (ch == "-" && StringLen(numStr) == 0)) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            double newVal = StringToDouble(numStr);
+            if(MathAbs(newVal - InpLossWeight) > 0.0001)
+            {
+               InpLossWeight = newVal;
+               Print("[SYNC] Loss weight da dashboard: ", DoubleToString(newVal, 4));
+            }
+         }
+      }
+   }
+
+   //--- Estrai max_concurrent
+   int pos_max_concurrent = StringFind(respStr, "\"max_concurrent\"", cfgPos);
+   if(pos_max_concurrent >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_max_concurrent);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpMaxConcurrent)
+            {
+               InpMaxConcurrent = newVal;
+               Print("[SYNC] Max trade aperti da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai max_per_pair
+   int pos_max_per_pair = StringFind(respStr, "\"max_per_pair\"", cfgPos);
+   if(pos_max_per_pair >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_max_per_pair);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpMaxPerPair)
+            {
+               InpMaxPerPair = newVal;
+               Print("[SYNC] Max trade per coppia da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai fixed_lots
+   int pos_fixed_lots = StringFind(respStr, "\"fixed_lots\"", cfgPos);
+   if(pos_fixed_lots >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_fixed_lots);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if((ch >= "0" && ch <= "9") || ch == "." || (ch == "-" && StringLen(numStr) == 0)) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            double newVal = StringToDouble(numStr);
+            if(MathAbs(newVal - InpFixedLots) > 0.0001)
+            {
+               InpFixedLots = newVal;
+               Print("[SYNC] Lotto base da dashboard: ", DoubleToString(newVal, 4));
+            }
+         }
+      }
+   }
+
+   //--- Estrai max_lots_cap
+   int pos_max_lots_cap = StringFind(respStr, "\"max_lots_cap\"", cfgPos);
+   if(pos_max_lots_cap >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_max_lots_cap);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if((ch >= "0" && ch <= "9") || ch == "." || (ch == "-" && StringLen(numStr) == 0)) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            double newVal = StringToDouble(numStr);
+            if(MathAbs(newVal - InpMaxLotsCap) > 0.0001)
+            {
+               InpMaxLotsCap = newVal;
+               Print("[SYNC] Lotto max cap da dashboard: ", DoubleToString(newVal, 4));
+            }
+         }
+      }
+   }
+
+   //--- Estrai max_lots_safety
+   int pos_max_lots_safety = StringFind(respStr, "\"max_lots_safety\"", cfgPos);
+   if(pos_max_lots_safety >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_max_lots_safety);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if((ch >= "0" && ch <= "9") || ch == "." || (ch == "-" && StringLen(numStr) == 0)) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            double newVal = StringToDouble(numStr);
+            if(MathAbs(newVal - InpMaxLotsSafety) > 0.0001)
+            {
+               InpMaxLotsSafety = newVal;
+               Print("[SYNC] Lotto max sicurezza da dashboard: ", DoubleToString(newVal, 4));
+            }
+         }
+      }
+   }
+
+   //--- Estrai dynamic_lots_on
+   int pos_dynamic_lots_on = StringFind(respStr, "\"dynamic_lots_on\"", cfgPos);
+   if(pos_dynamic_lots_on >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_dynamic_lots_on);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpDynamicLotsOn)
+         {
+            InpDynamicLotsOn = newVal;
+            Print("[SYNC] Lotto dinamico ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai dynamic_lookback
+   int pos_dynamic_lookback = StringFind(respStr, "\"dynamic_lookback\"", cfgPos);
+   if(pos_dynamic_lookback >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_dynamic_lookback);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpDynamicLookback)
+            {
+               InpDynamicLookback = newVal;
+               Print("[SYNC] Lotto dyn lookback da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai friday_lots
+   int pos_friday_lots = StringFind(respStr, "\"friday_lots\"", cfgPos);
+   if(pos_friday_lots >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_friday_lots);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if((ch >= "0" && ch <= "9") || ch == "." || (ch == "-" && StringLen(numStr) == 0)) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            double newVal = StringToDouble(numStr);
+            if(MathAbs(newVal - InpFridayLots) > 0.0001)
+            {
+               InpFridayLots = newVal;
+               Print("[SYNC] Lotto Venerdi da dashboard: ", DoubleToString(newVal, 4));
+            }
+         }
+      }
+   }
+
+   //--- Estrai afternoon_lots
+   int pos_afternoon_lots = StringFind(respStr, "\"afternoon_lots\"", cfgPos);
+   if(pos_afternoon_lots >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_afternoon_lots);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if((ch >= "0" && ch <= "9") || ch == "." || (ch == "-" && StringLen(numStr) == 0)) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            double newVal = StringToDouble(numStr);
+            if(MathAbs(newVal - InpAfternoonLots) > 0.0001)
+            {
+               InpAfternoonLots = newVal;
+               Print("[SYNC] Lotto Pomeriggio da dashboard: ", DoubleToString(newVal, 4));
+            }
+         }
+      }
+   }
+
+   //--- Estrai no_monday_trade
+   int pos_no_monday_trade = StringFind(respStr, "\"no_monday_trade\"", cfgPos);
+   if(pos_no_monday_trade >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_no_monday_trade);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpNoMondayTrade)
+         {
+            InpNoMondayTrade = newVal;
+            Print("[SYNC] No Lunedi ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai no_buy
+   int pos_no_buy = StringFind(respStr, "\"no_buy\"", cfgPos);
+   if(pos_no_buy >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_no_buy);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpNoBUY)
+         {
+            InpNoBUY = newVal;
+            Print("[SYNC] No BUY ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai symbol_blacklist
+   int pos_symbol_blacklist = StringFind(respStr, "\"symbol_blacklist\"", cfgPos);
+   if(pos_symbol_blacklist >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_symbol_blacklist);
+      if(colonP >= 0)
+      {
+         int q1 = StringFind(respStr, "\"", colonP + 1);
+         int q2 = StringFind(respStr, "\"", q1 + 1);
+         if(q1 >= 0 && q2 > q1)
+         {
+            string newVal = StringSubstr(respStr, q1 + 1, q2 - q1 - 1);
+            if(newVal != InpSymbolBlacklist)
+            {
+               InpSymbolBlacklist = newVal;
+               Print("[SYNC] Blacklist simboli da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai hyper_on
+   int pos_hyper_on = StringFind(respStr, "\"hyper_on\"", cfgPos);
+   if(pos_hyper_on >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_hyper_on);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpHyperOn)
+         {
+            InpHyperOn = newVal;
+            Print("[SYNC] Hyper mode ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai hyper_symbols
+   int pos_hyper_symbols = StringFind(respStr, "\"hyper_symbols\"", cfgPos);
+   if(pos_hyper_symbols >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_hyper_symbols);
+      if(colonP >= 0)
+      {
+         int q1 = StringFind(respStr, "\"", colonP + 1);
+         int q2 = StringFind(respStr, "\"", q1 + 1);
+         if(q1 >= 0 && q2 > q1)
+         {
+            string newVal = StringSubstr(respStr, q1 + 1, q2 - q1 - 1);
+            if(newVal != InpHyperSymbols)
+            {
+               InpHyperSymbols = newVal;
+               Print("[SYNC] Whitelist ipercons. da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai tp_percent
+   int pos_tp_percent = StringFind(respStr, "\"tp_percent\"", cfgPos);
+   if(pos_tp_percent >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_tp_percent);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpTPPercent)
+            {
+               InpTPPercent = newVal;
+               Print("[SYNC] TP % ADR max da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai tp_percent_min
+   int pos_tp_percent_min = StringFind(respStr, "\"tp_percent_min\"", cfgPos);
+   if(pos_tp_percent_min >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_tp_percent_min);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpTPPercentMin)
+            {
+               InpTPPercentMin = newVal;
+               Print("[SYNC] TP % ADR min da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai tp_adaptive
+   int pos_tp_adaptive = StringFind(respStr, "\"tp_adaptive\"", cfgPos);
+   if(pos_tp_adaptive >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_tp_adaptive);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpTPAdaptive)
+         {
+            InpTPAdaptive = newVal;
+            Print("[SYNC] TP adattivo ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai max_tp_pips
+   int pos_max_tp_pips = StringFind(respStr, "\"max_tp_pips\"", cfgPos);
+   if(pos_max_tp_pips >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_max_tp_pips);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpMaxTPPips)
+            {
+               InpMaxTPPips = newVal;
+               Print("[SYNC] TP max pip da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai min_rr
+   int pos_min_rr = StringFind(respStr, "\"min_rr\"", cfgPos);
+   if(pos_min_rr >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_min_rr);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if((ch >= "0" && ch <= "9") || ch == "." || (ch == "-" && StringLen(numStr) == 0)) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            double newVal = StringToDouble(numStr);
+            if(MathAbs(newVal - InpMinRR) > 0.0001)
+            {
+               InpMinRR = newVal;
+               Print("[SYNC] R:R minimo da dashboard: ", DoubleToString(newVal, 4));
+            }
+         }
+      }
+   }
+
+   //--- Estrai be_pips
+   int pos_be_pips = StringFind(respStr, "\"be_pips\"", cfgPos);
+   if(pos_be_pips >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_be_pips);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpBEPips)
+            {
+               InpBEPips = newVal;
+               Print("[SYNC] Break-Even pip da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai be_profit
+   int pos_be_profit = StringFind(respStr, "\"be_profit\"", cfgPos);
+   if(pos_be_profit >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_be_profit);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpBEProfit)
+            {
+               InpBEProfit = newVal;
+               Print("[SYNC] Break-Even profitto da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai trailing_on
+   int pos_trailing_on = StringFind(respStr, "\"trailing_on\"", cfgPos);
+   if(pos_trailing_on >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_trailing_on);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpTrailingOn)
+         {
+            InpTrailingOn = newVal;
+            Print("[SYNC] Trailing stop ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai trail_activate
+   int pos_trail_activate = StringFind(respStr, "\"trail_activate\"", cfgPos);
+   if(pos_trail_activate >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_trail_activate);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if((ch >= "0" && ch <= "9") || ch == "." || (ch == "-" && StringLen(numStr) == 0)) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            double newVal = StringToDouble(numStr);
+            if(MathAbs(newVal - InpTrailActivate) > 0.0001)
+            {
+               InpTrailActivate = newVal;
+               Print("[SYNC] Trail attivazione R da dashboard: ", DoubleToString(newVal, 4));
+            }
+         }
+      }
+   }
+
+   //--- Estrai trail_atr_mult
+   int pos_trail_atr_mult = StringFind(respStr, "\"trail_atr_mult\"", cfgPos);
+   if(pos_trail_atr_mult >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_trail_atr_mult);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if((ch >= "0" && ch <= "9") || ch == "." || (ch == "-" && StringLen(numStr) == 0)) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            double newVal = StringToDouble(numStr);
+            if(MathAbs(newVal - InpTrailATRMult) > 0.0001)
+            {
+               InpTrailATRMult = newVal;
+               Print("[SYNC] Trail ATR mult da dashboard: ", DoubleToString(newVal, 4));
+            }
+         }
+      }
+   }
+
+   //--- Estrai trail_step_pips
+   int pos_trail_step_pips = StringFind(respStr, "\"trail_step_pips\"", cfgPos);
+   if(pos_trail_step_pips >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_trail_step_pips);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpTrailStepPips)
+            {
+               InpTrailStepPips = newVal;
+               Print("[SYNC] Trail step pip da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai rv_max
+   int pos_rv_max = StringFind(respStr, "\"rv_max\"", cfgPos);
+   if(pos_rv_max >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_rv_max);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpRV_Max)
+            {
+               InpRV_Max = newVal;
+               Print("[SYNC] RV max da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai adr_max
+   int pos_adr_max = StringFind(respStr, "\"adr_max\"", cfgPos);
+   if(pos_adr_max >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_adr_max);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if((ch >= "0" && ch <= "9") || ch == "." || (ch == "-" && StringLen(numStr) == 0)) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            double newVal = StringToDouble(numStr);
+            if(MathAbs(newVal - InpADR_Max) > 0.0001)
+            {
+               InpADR_Max = newVal;
+               Print("[SYNC] ADR% max da dashboard: ", DoubleToString(newVal, 4));
+            }
+         }
+      }
+   }
+
+   //--- Estrai max_consecutive
+   int pos_max_consecutive = StringFind(respStr, "\"max_consecutive\"", cfgPos);
+   if(pos_max_consecutive >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_max_consecutive);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpMaxConsecutive)
+            {
+               InpMaxConsecutive = newVal;
+               Print("[SYNC] Max candele consecutive da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai min_ema_gap_pct
+   int pos_min_ema_gap_pct = StringFind(respStr, "\"min_ema_gap_pct\"", cfgPos);
+   if(pos_min_ema_gap_pct >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_min_ema_gap_pct);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if((ch >= "0" && ch <= "9") || ch == "." || (ch == "-" && StringLen(numStr) == 0)) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            double newVal = StringToDouble(numStr);
+            if(MathAbs(newVal - InpMinEMAGapPct) > 0.0001)
+            {
+               InpMinEMAGapPct = newVal;
+               Print("[SYNC] Min gap EMA % da dashboard: ", DoubleToString(newVal, 4));
+            }
+         }
+      }
+   }
+
+   //--- Estrai rev_min_ema_gap_pct
+   int pos_rev_min_ema_gap_pct = StringFind(respStr, "\"rev_min_ema_gap_pct\"", cfgPos);
+   if(pos_rev_min_ema_gap_pct >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_rev_min_ema_gap_pct);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if((ch >= "0" && ch <= "9") || ch == "." || (ch == "-" && StringLen(numStr) == 0)) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            double newVal = StringToDouble(numStr);
+            if(MathAbs(newVal - InpRevMinEMAGapPct) > 0.0001)
+            {
+               InpRevMinEMAGapPct = newVal;
+               Print("[SYNC] Min gap EMA Reversal % da dashboard: ", DoubleToString(newVal, 4));
+            }
+         }
+      }
+   }
+
+   //--- Estrai rx_required
+   int pos_rx_required = StringFind(respStr, "\"rx_required\"", cfgPos);
+   if(pos_rx_required >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_rx_required);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpRXRequired)
+         {
+            InpRXRequired = newVal;
+            Print("[SYNC] RX richiesto ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai rx_max_age
+   int pos_rx_max_age = StringFind(respStr, "\"rx_max_age\"", cfgPos);
+   if(pos_rx_max_age >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_rx_max_age);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpRXMaxAge)
+            {
+               InpRXMaxAge = newVal;
+               Print("[SYNC] RX eta max da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai rx_bonus_score
+   int pos_rx_bonus_score = StringFind(respStr, "\"rx_bonus_score\"", cfgPos);
+   if(pos_rx_bonus_score >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_rx_bonus_score);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpRXBonusScore)
+         {
+            InpRXBonusScore = newVal;
+            Print("[SYNC] RX bonus score ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai breakout_on
+   int pos_breakout_on = StringFind(respStr, "\"breakout_on\"", cfgPos);
+   if(pos_breakout_on >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_breakout_on);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpBreakoutOn)
+         {
+            InpBreakoutOn = newVal;
+            Print("[SYNC] Breakout ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai breakout_min_light
+   int pos_breakout_min_light = StringFind(respStr, "\"breakout_min_light\"", cfgPos);
+   if(pos_breakout_min_light >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_breakout_min_light);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpBreakoutMinLIGHT)
+            {
+               InpBreakoutMinLIGHT = newVal;
+               Print("[SYNC] Breakout min LIGHT da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai breakout_ema_gap_pct
+   int pos_breakout_ema_gap_pct = StringFind(respStr, "\"breakout_ema_gap_pct\"", cfgPos);
+   if(pos_breakout_ema_gap_pct >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_breakout_ema_gap_pct);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if((ch >= "0" && ch <= "9") || ch == "." || (ch == "-" && StringLen(numStr) == 0)) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            double newVal = StringToDouble(numStr);
+            if(MathAbs(newVal - InpBreakoutEMAGapPct) > 0.0001)
+            {
+               InpBreakoutEMAGapPct = newVal;
+               Print("[SYNC] Breakout max gap EMA % da dashboard: ", DoubleToString(newVal, 4));
+            }
+         }
+      }
+   }
+
+   //--- Estrai breakout_max_rv
+   int pos_breakout_max_rv = StringFind(respStr, "\"breakout_max_rv\"", cfgPos);
+   if(pos_breakout_max_rv >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_breakout_max_rv);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpBreakoutMaxRV)
+            {
+               InpBreakoutMaxRV = newVal;
+               Print("[SYNC] Breakout max RV da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai breakout_max_adx
+   int pos_breakout_max_adx = StringFind(respStr, "\"breakout_max_adx\"", cfgPos);
+   if(pos_breakout_max_adx >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_breakout_max_adx);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if((ch >= "0" && ch <= "9") || ch == "." || (ch == "-" && StringLen(numStr) == 0)) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            double newVal = StringToDouble(numStr);
+            if(MathAbs(newVal - InpBreakoutMaxADX) > 0.0001)
+            {
+               InpBreakoutMaxADX = newVal;
+               Print("[SYNC] Breakout max ADX da dashboard: ", DoubleToString(newVal, 4));
+            }
+         }
+      }
+   }
+
+   //--- Estrai breakout_max_adr
+   int pos_breakout_max_adr = StringFind(respStr, "\"breakout_max_adr\"", cfgPos);
+   if(pos_breakout_max_adr >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_breakout_max_adr);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if((ch >= "0" && ch <= "9") || ch == "." || (ch == "-" && StringLen(numStr) == 0)) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            double newVal = StringToDouble(numStr);
+            if(MathAbs(newVal - InpBreakoutMaxADR) > 0.0001)
+            {
+               InpBreakoutMaxADR = newVal;
+               Print("[SYNC] Breakout max ADR% da dashboard: ", DoubleToString(newVal, 4));
+            }
+         }
+      }
+   }
+
+   //--- Estrai breakout_min_rr
+   int pos_breakout_min_rr = StringFind(respStr, "\"breakout_min_rr\"", cfgPos);
+   if(pos_breakout_min_rr >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_breakout_min_rr);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if((ch >= "0" && ch <= "9") || ch == "." || (ch == "-" && StringLen(numStr) == 0)) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            double newVal = StringToDouble(numStr);
+            if(MathAbs(newVal - InpBreakoutMinRR) > 0.0001)
+            {
+               InpBreakoutMinRR = newVal;
+               Print("[SYNC] Breakout R:R min da dashboard: ", DoubleToString(newVal, 4));
+            }
+         }
+      }
+   }
+
+   //--- Estrai breakout_req_rx
+   int pos_breakout_req_rx = StringFind(respStr, "\"breakout_req_rx\"", cfgPos);
+   if(pos_breakout_req_rx >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_breakout_req_rx);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpBreakoutReqRX)
+         {
+            InpBreakoutReqRX = newVal;
+            Print("[SYNC] Breakout richiede RX ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai breakout_max_rx_age
+   int pos_breakout_max_rx_age = StringFind(respStr, "\"breakout_max_rx_age\"", cfgPos);
+   if(pos_breakout_max_rx_age >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_breakout_max_rx_age);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpBreakoutMaxRXAge)
+            {
+               InpBreakoutMaxRXAge = newVal;
+               Print("[SYNC] Breakout RX eta max da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai breakout_atr_exp
+   int pos_breakout_atr_exp = StringFind(respStr, "\"breakout_atr_exp\"", cfgPos);
+   if(pos_breakout_atr_exp >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_breakout_atr_exp);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpBreakoutATRExp)
+         {
+            InpBreakoutATRExp = newVal;
+            Print("[SYNC] Breakout ATR exp ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai breakout_price_ema
+   int pos_breakout_price_ema = StringFind(respStr, "\"breakout_price_ema\"", cfgPos);
+   if(pos_breakout_price_ema >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_breakout_price_ema);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpBreakoutPriceEMA)
+         {
+            InpBreakoutPriceEMA = newVal;
+            Print("[SYNC] Breakout price EMA ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai breakout_min_body
+   int pos_breakout_min_body = StringFind(respStr, "\"breakout_min_body\"", cfgPos);
+   if(pos_breakout_min_body >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_breakout_min_body);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if((ch >= "0" && ch <= "9") || ch == "." || (ch == "-" && StringLen(numStr) == 0)) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            double newVal = StringToDouble(numStr);
+            if(MathAbs(newVal - InpBreakoutMinBody) > 0.0001)
+            {
+               InpBreakoutMinBody = newVal;
+               Print("[SYNC] Breakout min body da dashboard: ", DoubleToString(newVal, 4));
+            }
+         }
+      }
+   }
+
+   //--- Estrai breakout_score_bonus
+   int pos_breakout_score_bonus = StringFind(respStr, "\"breakout_score_bonus\"", cfgPos);
+   if(pos_breakout_score_bonus >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_breakout_score_bonus);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpBreakoutScoreBonus)
+            {
+               InpBreakoutScoreBonus = newVal;
+               Print("[SYNC] Breakout score bonus da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai reversal_on
+   int pos_reversal_on = StringFind(respStr, "\"reversal_on\"", cfgPos);
+   if(pos_reversal_on >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_reversal_on);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpReversalOn)
+         {
+            InpReversalOn = newVal;
+            Print("[SYNC] Reversal ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai reversal_observe
+   int pos_reversal_observe = StringFind(respStr, "\"reversal_observe\"", cfgPos);
+   if(pos_reversal_observe >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_reversal_observe);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpReversalObserve)
+         {
+            InpReversalObserve = newVal;
+            Print("[SYNC] Reversal osservazione ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai rev_lots
+   int pos_rev_lots = StringFind(respStr, "\"rev_lots\"", cfgPos);
+   if(pos_rev_lots >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_rev_lots);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if((ch >= "0" && ch <= "9") || ch == "." || (ch == "-" && StringLen(numStr) == 0)) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            double newVal = StringToDouble(numStr);
+            if(MathAbs(newVal - InpRevLots) > 0.0001)
+            {
+               InpRevLots = newVal;
+               Print("[SYNC] Reversal lotto da dashboard: ", DoubleToString(newVal, 4));
+            }
+         }
+      }
+   }
+
+   //--- Estrai reversal_rv
+   int pos_reversal_rv = StringFind(respStr, "\"reversal_rv\"", cfgPos);
+   if(pos_reversal_rv >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_reversal_rv);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpReversalRV)
+            {
+               InpReversalRV = newVal;
+               Print("[SYNC] Reversal RV min da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai reversal_rv_max
+   int pos_reversal_rv_max = StringFind(respStr, "\"reversal_rv_max\"", cfgPos);
+   if(pos_reversal_rv_max >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_reversal_rv_max);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpReversalRVMax)
+            {
+               InpReversalRVMax = newVal;
+               Print("[SYNC] Reversal RV max da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai reversal_adr
+   int pos_reversal_adr = StringFind(respStr, "\"reversal_adr\"", cfgPos);
+   if(pos_reversal_adr >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_reversal_adr);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if((ch >= "0" && ch <= "9") || ch == "." || (ch == "-" && StringLen(numStr) == 0)) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            double newVal = StringToDouble(numStr);
+            if(MathAbs(newVal - InpReversalADR) > 0.0001)
+            {
+               InpReversalADR = newVal;
+               Print("[SYNC] Reversal ADR% min da dashboard: ", DoubleToString(newVal, 4));
+            }
+         }
+      }
+   }
+
+   //--- Estrai rev_req_decel
+   int pos_rev_req_decel = StringFind(respStr, "\"rev_req_decel\"", cfgPos);
+   if(pos_rev_req_decel >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_rev_req_decel);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpRevReqDecel)
+         {
+            InpRevReqDecel = newVal;
+            Print("[SYNC] Reversal decel ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai rev_min_decel
+   int pos_rev_min_decel = StringFind(respStr, "\"rev_min_decel\"", cfgPos);
+   if(pos_rev_min_decel >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_rev_min_decel);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpRevMinDecel)
+            {
+               InpRevMinDecel = newVal;
+               Print("[SYNC] Reversal min decel da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai rev_req_rx
+   int pos_rev_req_rx = StringFind(respStr, "\"rev_req_rx\"", cfgPos);
+   if(pos_rev_req_rx >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_rev_req_rx);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpRevReqRX)
+         {
+            InpRevReqRX = newVal;
+            Print("[SYNC] Reversal RX ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai rev_rx_bonus
+   int pos_rev_rx_bonus = StringFind(respStr, "\"rev_rx_bonus\"", cfgPos);
+   if(pos_rev_rx_bonus >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_rev_rx_bonus);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpRevRXBonus)
+         {
+            InpRevRXBonus = newVal;
+            Print("[SYNC] Reversal RX bonus ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai rev_req_diverg
+   int pos_rev_req_diverg = StringFind(respStr, "\"rev_req_diverg\"", cfgPos);
+   if(pos_rev_req_diverg >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_rev_req_diverg);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpRevReqDiverg)
+         {
+            InpRevReqDiverg = newVal;
+            Print("[SYNC] Reversal divergenza ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai rev_diverg_bars
+   int pos_rev_diverg_bars = StringFind(respStr, "\"rev_diverg_bars\"", cfgPos);
+   if(pos_rev_diverg_bars >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_rev_diverg_bars);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpRevDivergBars)
+            {
+               InpRevDivergBars = newVal;
+               Print("[SYNC] Reversal divergenza bars da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai rev_req_hist_flip
+   int pos_rev_req_hist_flip = StringFind(respStr, "\"rev_req_hist_flip\"", cfgPos);
+   if(pos_rev_req_hist_flip >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_rev_req_hist_flip);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpRevReqHistFlip)
+         {
+            InpRevReqHistFlip = newVal;
+            Print("[SYNC] Reversal hist flip ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai rev_max_hist_age
+   int pos_rev_max_hist_age = StringFind(respStr, "\"rev_max_hist_age\"", cfgPos);
+   if(pos_rev_max_hist_age >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_rev_max_hist_age);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpRevMaxHistAge)
+            {
+               InpRevMaxHistAge = newVal;
+               Print("[SYNC] Reversal max hist age da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai session_filter_on
+   int pos_session_filter_on = StringFind(respStr, "\"session_filter_on\"", cfgPos);
+   if(pos_session_filter_on >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_session_filter_on);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpSessionFilterOn)
+         {
+            InpSessionFilterOn = newVal;
+            Print("[SYNC] Filtro sessione ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai session_start_utc
+   int pos_session_start_utc = StringFind(respStr, "\"session_start_utc\"", cfgPos);
+   if(pos_session_start_utc >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_session_start_utc);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpSessionStartUTC)
+            {
+               InpSessionStartUTC = newVal;
+               Print("[SYNC] Sessione inizio UTC da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai session_end_utc
+   int pos_session_end_utc = StringFind(respStr, "\"session_end_utc\"", cfgPos);
+   if(pos_session_end_utc >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_session_end_utc);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpSessionEndUTC)
+            {
+               InpSessionEndUTC = newVal;
+               Print("[SYNC] Sessione fine UTC da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai time_offset
+   int pos_time_offset = StringFind(respStr, "\"time_offset\"", cfgPos);
+   if(pos_time_offset >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_time_offset);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpTimeOffset)
+            {
+               InpTimeOffset = newVal;
+               Print("[SYNC] Time offset da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai no_night_trade
+   int pos_no_night_trade = StringFind(respStr, "\"no_night_trade\"", cfgPos);
+   if(pos_no_night_trade >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_no_night_trade);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpNoNightTrade)
+         {
+            InpNoNightTrade = newVal;
+            Print("[SYNC] No night trade ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai night_start_h
+   int pos_night_start_h = StringFind(respStr, "\"night_start_h\"", cfgPos);
+   if(pos_night_start_h >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_night_start_h);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpNightStartH)
+            {
+               InpNightStartH = newVal;
+               Print("[SYNC] Notte inizio da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai night_end_h
+   int pos_night_end_h = StringFind(respStr, "\"night_end_h\"", cfgPos);
+   if(pos_night_end_h >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_night_end_h);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpNightEndH)
+            {
+               InpNightEndH = newVal;
+               Print("[SYNC] Notte fine da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai sunday_start_h
+   int pos_sunday_start_h = StringFind(respStr, "\"sunday_start_h\"", cfgPos);
+   if(pos_sunday_start_h >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_sunday_start_h);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpSundayStartH)
+            {
+               InpSundayStartH = newVal;
+               Print("[SYNC] Domenica inizio da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai fri_close_profit_h
+   int pos_fri_close_profit_h = StringFind(respStr, "\"fri_close_profit_h\"", cfgPos);
+   if(pos_fri_close_profit_h >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_fri_close_profit_h);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpFriCloseProfitH)
+            {
+               InpFriCloseProfitH = newVal;
+               Print("[SYNC] Ven chiudi profitto ora da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai fri_close_profit_m
+   int pos_fri_close_profit_m = StringFind(respStr, "\"fri_close_profit_m\"", cfgPos);
+   if(pos_fri_close_profit_m >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_fri_close_profit_m);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpFriCloseProfitM)
+            {
+               InpFriCloseProfitM = newVal;
+               Print("[SYNC] Ven chiudi profitto min da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai fri_close_loss_h
+   int pos_fri_close_loss_h = StringFind(respStr, "\"fri_close_loss_h\"", cfgPos);
+   if(pos_fri_close_loss_h >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_fri_close_loss_h);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpFriCloseLossH)
+            {
+               InpFriCloseLossH = newVal;
+               Print("[SYNC] Ven chiudi perdita ora da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai fri_close_loss_m
+   int pos_fri_close_loss_m = StringFind(respStr, "\"fri_close_loss_m\"", cfgPos);
+   if(pos_fri_close_loss_m >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_fri_close_loss_m);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpFriCloseLossM)
+            {
+               InpFriCloseLossM = newVal;
+               Print("[SYNC] Ven chiudi perdita min da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai fri_force_close_h
+   int pos_fri_force_close_h = StringFind(respStr, "\"fri_force_close_h\"", cfgPos);
+   if(pos_fri_force_close_h >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_fri_force_close_h);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpFriForceCloseH)
+            {
+               InpFriForceCloseH = newVal;
+               Print("[SYNC] Ven chiusura forzata ora da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai fri_force_close_m
+   int pos_fri_force_close_m = StringFind(respStr, "\"fri_force_close_m\"", cfgPos);
+   if(pos_fri_force_close_m >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_fri_force_close_m);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpFriForceCloseM)
+            {
+               InpFriForceCloseM = newVal;
+               Print("[SYNC] Ven chiusura forzata min da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai data_mode
+   int pos_data_mode = StringFind(respStr, "\"data_mode\"", cfgPos);
+   if(pos_data_mode >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_data_mode);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpDataMode)
+            {
+               InpDataMode = newVal;
+               Print("[SYNC] Data mode da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai csv_file
+   int pos_csv_file = StringFind(respStr, "\"csv_file\"", cfgPos);
+   if(pos_csv_file >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_csv_file);
+      if(colonP >= 0)
+      {
+         int q1 = StringFind(respStr, "\"", colonP + 1);
+         int q2 = StringFind(respStr, "\"", q1 + 1);
+         if(q1 >= 0 && q2 > q1)
+         {
+            string newVal = StringSubstr(respStr, q1 + 1, q2 - q1 - 1);
+            if(newVal != InpCSVFile)
+            {
+               InpCSVFile = newVal;
+               Print("[SYNC] CSV file da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai csv_max_age_sec
+   int pos_csv_max_age_sec = StringFind(respStr, "\"csv_max_age_sec\"", cfgPos);
+   if(pos_csv_max_age_sec >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_csv_max_age_sec);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpCSVMaxAgeSec)
+            {
+               InpCSVMaxAgeSec = newVal;
+               Print("[SYNC] CSV max age sec da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai radar_indicator
+   int pos_radar_indicator = StringFind(respStr, "\"radar_indicator\"", cfgPos);
+   if(pos_radar_indicator >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_radar_indicator);
+      if(colonP >= 0)
+      {
+         int q1 = StringFind(respStr, "\"", colonP + 1);
+         int q2 = StringFind(respStr, "\"", q1 + 1);
+         if(q1 >= 0 && q2 > q1)
+         {
+            string newVal = StringSubstr(respStr, q1 + 1, q2 - q1 - 1);
+            if(newVal != InpRadarIndicator)
+            {
+               InpRadarIndicator = newVal;
+               Print("[SYNC] Radar indicator da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai export_csv
+   int pos_export_csv = StringFind(respStr, "\"export_csv\"", cfgPos);
+   if(pos_export_csv >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_export_csv);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpExportCSV)
+         {
+            InpExportCSV = newVal;
+            Print("[SYNC] Export CSV ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai auto_fallback
+   int pos_auto_fallback = StringFind(respStr, "\"auto_fallback\"", cfgPos);
+   if(pos_auto_fallback >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_auto_fallback);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpAutoFallback)
+         {
+            InpAutoFallback = newVal;
+            Print("[SYNC] Auto fallback ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai fallback_after
+   int pos_fallback_after = StringFind(respStr, "\"fallback_after\"", cfgPos);
+   if(pos_fallback_after >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_fallback_after);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpFallbackAfter)
+            {
+               InpFallbackAfter = newVal;
+               Print("[SYNC] Fallback after da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai show_export_btn
+   int pos_show_export_btn = StringFind(respStr, "\"show_export_btn\"", cfgPos);
+   if(pos_show_export_btn >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_show_export_btn);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpShowExportBtn)
+         {
+            InpShowExportBtn = newVal;
+            Print("[SYNC] Show export button ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai auto_export
+   int pos_auto_export = StringFind(respStr, "\"auto_export\"", cfgPos);
+   if(pos_auto_export >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_auto_export);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpAutoExport)
+         {
+            InpAutoExport = newVal;
+            Print("[SYNC] Auto export ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai strategy_test
+   int pos_strategy_test = StringFind(respStr, "\"strategy_test\"", cfgPos);
+   if(pos_strategy_test >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_strategy_test);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpStrategyTest)
+         {
+            InpStrategyTest = newVal;
+            Print("[SYNC] Strategy test mode ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai ai_url
+   int pos_ai_url = StringFind(respStr, "\"ai_url\"", cfgPos);
+   if(pos_ai_url >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_ai_url);
+      if(colonP >= 0)
+      {
+         int q1 = StringFind(respStr, "\"", colonP + 1);
+         int q2 = StringFind(respStr, "\"", q1 + 1);
+         if(q1 >= 0 && q2 > q1)
+         {
+            string newVal = StringSubstr(respStr, q1 + 1, q2 - q1 - 1);
+            if(newVal != InpAIUrl)
+            {
+               InpAIUrl = newVal;
+               Print("[SYNC] AI URL da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai ai_timeout
+   int pos_ai_timeout = StringFind(respStr, "\"ai_timeout\"", cfgPos);
+   if(pos_ai_timeout >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_ai_timeout);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpAITimeout)
+            {
+               InpAITimeout = newVal;
+               Print("[SYNC] AI timeout da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai ai_log
+   int pos_ai_log = StringFind(respStr, "\"ai_log\"", cfgPos);
+   if(pos_ai_log >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_ai_log);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpAILog)
+         {
+            InpAILog = newVal;
+            Print("[SYNC] AI log ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai test_trade
+   int pos_test_trade = StringFind(respStr, "\"test_trade\"", cfgPos);
+   if(pos_test_trade >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_test_trade);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpTestTrade)
+         {
+            InpTestTrade = newVal;
+            Print("[SYNC] Test trade ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai magic_number
+   int pos_magic_number = StringFind(respStr, "\"magic_number\"", cfgPos);
+   if(pos_magic_number >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_magic_number);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpMagicNumber)
+            {
+               InpMagicNumber = newVal;
+               Print("[SYNC] Magic number da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai max_slippage
+   int pos_max_slippage = StringFind(respStr, "\"max_slippage\"", cfgPos);
+   if(pos_max_slippage >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_max_slippage);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpMaxSlippage)
+            {
+               InpMaxSlippage = newVal;
+               Print("[SYNC] Max slippage da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai max_spread
+   int pos_max_spread = StringFind(respStr, "\"max_spread\"", cfgPos);
+   if(pos_max_spread >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_max_spread);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpMaxSpread)
+            {
+               InpMaxSpread = newVal;
+               Print("[SYNC] Max spread da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai spread_dyn_mult
+   int pos_spread_dyn_mult = StringFind(respStr, "\"spread_dyn_mult\"", cfgPos);
+   if(pos_spread_dyn_mult >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_spread_dyn_mult);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if((ch >= "0" && ch <= "9") || ch == "." || (ch == "-" && StringLen(numStr) == 0)) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            double newVal = StringToDouble(numStr);
+            if(MathAbs(newVal - InpSpreadDynMult) > 0.0001)
+            {
+               InpSpreadDynMult = newVal;
+               Print("[SYNC] Spread dyn mult da dashboard: ", DoubleToString(newVal, 4));
+            }
+         }
+      }
+   }
+
+   //--- Estrai atr_mult
+   int pos_atr_mult = StringFind(respStr, "\"atr_mult\"", cfgPos);
+   if(pos_atr_mult >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_atr_mult);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if((ch >= "0" && ch <= "9") || ch == "." || (ch == "-" && StringLen(numStr) == 0)) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            double newVal = StringToDouble(numStr);
+            if(MathAbs(newVal - InpATR_Mult) > 0.0001)
+            {
+               InpATR_Mult = newVal;
+               Print("[SYNC] ATR mult da dashboard: ", DoubleToString(newVal, 4));
+            }
+         }
+      }
+   }
+
+   //--- Estrai atr_period
+   int pos_atr_period = StringFind(respStr, "\"atr_period\"", cfgPos);
+   if(pos_atr_period >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_atr_period);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpATR_Period)
+            {
+               InpATR_Period = newVal;
+               Print("[SYNC] ATR period da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai fractal_bars
+   int pos_fractal_bars = StringFind(respStr, "\"fractal_bars\"", cfgPos);
+   if(pos_fractal_bars >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_fractal_bars);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpFractalBars)
+            {
+               InpFractalBars = newVal;
+               Print("[SYNC] Fractal bars da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai dash_x
+   int pos_dash_x = StringFind(respStr, "\"dash_x\"", cfgPos);
+   if(pos_dash_x >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_dash_x);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpDashX)
+            {
+               InpDashX = newVal;
+               Print("[SYNC] Dashboard X da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai dash_y
+   int pos_dash_y = StringFind(respStr, "\"dash_y\"", cfgPos);
+   if(pos_dash_y >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_dash_y);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpDashY)
+            {
+               InpDashY = newVal;
+               Print("[SYNC] Dashboard Y da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai dash_font_size
+   int pos_dash_font_size = StringFind(respStr, "\"dash_font_size\"", cfgPos);
+   if(pos_dash_font_size >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_dash_font_size);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            int newVal = (int)StringToDouble(numStr);
+            if(newVal != InpDashFontSize)
+            {
+               InpDashFontSize = newVal;
+               Print("[SYNC] Dashboard font size da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai dash_color
+   int pos_dash_color = StringFind(respStr, "\"dash_color\"", cfgPos);
+   if(pos_dash_color >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_dash_color);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            color newVal = (color)StringToInteger(numStr);
+            if(newVal != InpDashColor)
+            {
+               InpDashColor = newVal;
+               Print("[SYNC] Dashboard colore testo da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai dash_bg_color
+   int pos_dash_bg_color = StringFind(respStr, "\"dash_bg_color\"", cfgPos);
+   if(pos_dash_bg_color >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_dash_bg_color);
+      if(colonP >= 0)
+      {
+         string numStr = "";
+         for(int c = colonP + 1; c < StringLen(respStr) && c < colonP + 12; c++)
+         {
+            string ch = StringSubstr(respStr, c, 1);
+            if(ch >= "0" && ch <= "9") numStr += ch;
+            else if(ch == "-" && StringLen(numStr) == 0) numStr += ch;
+            else if(StringLen(numStr) > 0) break;
+         }
+         if(StringLen(numStr) > 0)
+         {
+            color newVal = (color)StringToInteger(numStr);
+            if(newVal != InpDashBgColor)
+            {
+               InpDashBgColor = newVal;
+               Print("[SYNC] Dashboard colore sfondo da dashboard: ", newVal);
+            }
+         }
+      }
+   }
+
+   //--- Estrai dash_bg
+   int pos_dash_bg = StringFind(respStr, "\"dash_bg\"", cfgPos);
+   if(pos_dash_bg >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_dash_bg);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpDashBg)
+         {
+            InpDashBg = newVal;
+            Print("[SYNC] Dashboard sfondo ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
          }
       }
    }
@@ -5336,8 +7815,8 @@ void LogTradeToCSV(int ticket)
    double sl        = OrderStopLoss();
    double tp        = OrderTakeProfit();
    double profit    = OrderProfit() + OrderSwap() + OrderCommission();
-   string openTime  = TimeToString(OrderOpenTime(), TIME_DATE | TIME_MINUTES);
-   string closeTime = TimeToString(OrderCloseTime(), TIME_DATE | TIME_MINUTES);
+   string openTime  = TimeToString(OrderOpenTime(), TIME_DATE | TIME_MINUTES | TIME_SECONDS);
+   string closeTime = TimeToString(OrderCloseTime(), TIME_DATE | TIME_MINUTES | TIME_SECONDS);
    string comment   = OrderComment();
 
    bool isLong = (ot == OP_BUY);
