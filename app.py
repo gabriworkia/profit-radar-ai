@@ -1224,37 +1224,126 @@ def train_from_github():
 # ============================================================
 
 DEFAULT_EA_CONFIG = {
-    "aggressiveness": 2,
-    "use_ai": True,
-    "ai_min_conf": 70,
-    "send_feedback": True,
-    "daily_stop_on": True,
-    "max_consec_loss": 2,
-    "loss_weight": 1.5,
-    "rv_max": 30,
-    "adr_max": 60.0,
-    "min_rr": 1.5,
-    "tp_percent": 35,
-    "tp_percent_min": 20,
-    "max_tp_pips": 0,
-    "breakout_on": True,
-    "reversal_on": False,
-    "fixed_lots": 0.01,
-    "max_lots_cap": 0.05,
-    "dynamic_lots_on": False,
-    "dynamic_lookback": 20,
-    # Lotto ridotto per fasce a rischio: 0.00 = fascia chiusa, >0 = lotto speciale
-    "friday_lots": 0.01,
-    "afternoon_lots": 0.01,
-    "no_monday_trade": False,
-    "no_buy": False,
-    "symbol_blacklist": "",
-    "trailing_on": True,
-    "trail_activate": 1.5,
-    "trail_atr_mult": 0.5,
-    "trail_step_pips": 5,
-    "hyper_on": False,
-    "max_concurrent": 10,
+    # --- Configurazione principale ---
+    "aggressiveness" : 2,
+    "use_ai" : True,
+    "ai_min_conf" : 70,
+    "send_feedback" : True,
+    "daily_stop_on" : True,
+    "max_consec_loss" : 2,
+    "loss_weight" : 1.5,
+    "max_concurrent" : 10,
+    "max_per_pair" : 1,
+    # --- Lotto, rischio e fasce ---
+    "fixed_lots" : 0.01,
+    "max_lots_cap" : 0.05,
+    "max_lots_safety" : 0.05,
+    "dynamic_lots_on" : False,
+    "dynamic_lookback" : 20,
+    "friday_lots" : 0.01,
+    "afternoon_lots" : 0.01,
+    # --- Filtri giorno e direzione ---
+    "no_monday_trade" : False,
+    "no_buy" : False,
+    "symbol_blacklist" : '',
+    "hyper_on" : False,
+    "hyper_symbols" : 'CHFJPY+,EURCAD+,NZDUSD+',
+    # --- TP, RR, Trailing e Break-Even ---
+    "tp_percent" : 35,
+    "tp_percent_min" : 20,
+    "tp_adaptive" : True,
+    "max_tp_pips" : 0,
+    "min_rr" : 1.0,
+    "be_pips" : 15,
+    "be_profit" : 5,
+    "trailing_on" : True,
+    "trail_activate" : 1.5,
+    "trail_atr_mult" : 0.5,
+    "trail_step_pips" : 5,
+    # --- Filtri standard ---
+    "rv_max" : 30,
+    "adr_max" : 50.0,
+    "max_consecutive" : 15,
+    "min_ema_gap_pct" : 0.05,
+    "rev_min_ema_gap_pct" : 0.1,
+    # --- Filtro RX ---
+    "rx_required" : False,
+    "rx_max_age" : 4,
+    "rx_bonus_score" : True,
+    # --- Modulo Breakout ---
+    "breakout_on" : True,
+    "breakout_min_light" : 2,
+    "breakout_ema_gap_pct" : 0.2,
+    "breakout_max_rv" : 15,
+    "breakout_max_adx" : 25,
+    "breakout_max_adr" : 50,
+    "breakout_min_rr" : 1.8,
+    "breakout_req_rx" : False,
+    "breakout_max_rx_age" : 2,
+    "breakout_atr_exp" : True,
+    "breakout_price_ema" : True,
+    "breakout_min_body" : 0.3,
+    "breakout_score_bonus" : -80,
+    # --- Modulo Reversal ---
+    "reversal_on" : False,
+    "reversal_observe" : False,
+    "rev_lots" : 0.01,
+    "reversal_rv" : 65,
+    "reversal_rv_max" : 120,
+    "reversal_adr" : 90.0,
+    "rev_req_decel" : True,
+    "rev_min_decel" : 5,
+    "rev_req_rx" : True,
+    "rev_rx_bonus" : True,
+    "rev_req_diverg" : True,
+    "rev_diverg_bars" : 8,
+    "rev_req_hist_flip" : True,
+    "rev_max_hist_age" : 3,
+    # --- Orari e sessione ---
+    "session_filter_on" : True,
+    "session_start_utc" : 9,
+    "session_end_utc" : 14,
+    "time_offset" : -1,
+    "no_night_trade" : True,
+    "night_start_h" : 23,
+    "night_end_h" : 7,
+    "sunday_start_h" : 23,
+    "fri_close_profit_h" : 20,
+    "fri_close_profit_m" : 0,
+    "fri_close_loss_h" : 22,
+    "fri_close_loss_m" : 0,
+    "fri_force_close_h" : 22,
+    "fri_force_close_m" : 30,
+    # --- Dati, AI e log ---
+    "data_mode" : 1,
+    "csv_file" : 'AI_M15_LIGHT.csv',
+    "csv_max_age_sec" : 0,
+    "radar_indicator" : 'THE_PROFIT_RADAR_PRO_by_ULTIMA_MARKETS_v2_7',
+    "export_csv" : True,
+    "auto_fallback" : True,
+    "fallback_after" : 1,
+    "show_export_btn" : True,
+    "auto_export" : True,
+    "strategy_test" : False,
+    "ai_url" : 'https://profit-radar-ai.onrender.com/predict',
+    "ai_timeout" : 18000,
+    "ai_log" : True,
+    "test_trade" : False,
+    # --- Tecnici e sicurezza ---
+    "magic_number" : 270101,
+    "max_slippage" : 3,
+    "max_spread" : 30,
+    "spread_dyn_mult" : 3.0,
+    "atr_mult" : 1.2,
+    "atr_period" : 14,
+    "fractal_bars" : 50,
+    # --- Dashboard grafico MT4 ---
+    "dash_x" : 1300,
+    "dash_y" : 30,
+    "dash_font_size" : 9,
+    "dash_color" : 16777215,
+    "dash_bg_color" : 2626580,
+    "dash_bg" : True,
 }
 
 ea_status = {
@@ -1323,35 +1412,59 @@ def update_ea_config():
             return jsonify({"status": "error", "message": "No JSON"}), 200
 
         cfg = load_ea_config()
-        updatable = [
-            "aggressiveness", "use_ai", "ai_min_conf", "send_feedback",
-            "daily_stop_on", "max_consec_loss", "loss_weight",
-            "rv_max", "adr_max", "min_rr", "tp_percent", "tp_percent_min", "max_tp_pips",
-            "breakout_on", "reversal_on", "hyper_on",
-            "fixed_lots", "max_lots_cap", "dynamic_lots_on", "dynamic_lookback",
-            # Fasce orarie a rischio: lotto ridotto (0.00 = fascia chiusa)
-            "friday_lots", "afternoon_lots",
-            "no_monday_trade", "no_buy", "symbol_blacklist",
-            "trailing_on", "trail_activate", "trail_atr_mult", "trail_step_pips",
-            "max_concurrent",
-        ]
+        updatable = ["aggressiveness", "use_ai", "ai_min_conf", "send_feedback", 
+    "daily_stop_on", "max_consec_loss", "loss_weight", "max_concurrent", 
+    "max_per_pair", "fixed_lots", "max_lots_cap", "max_lots_safety", 
+    "dynamic_lots_on", "dynamic_lookback", "friday_lots", "afternoon_lots", 
+    "no_monday_trade", "no_buy", "symbol_blacklist", "hyper_on", "hyper_symbols", 
+    "tp_percent", "tp_percent_min", "tp_adaptive", "max_tp_pips", "min_rr", "be_pips", 
+    "be_profit", "trailing_on", "trail_activate", "trail_atr_mult", "trail_step_pips", 
+    "rv_max", "adr_max", "max_consecutive", "min_ema_gap_pct", "rev_min_ema_gap_pct", 
+    "rx_required", "rx_max_age", "rx_bonus_score", "breakout_on", 
+    "breakout_min_light", "breakout_ema_gap_pct", "breakout_max_rv", 
+    "breakout_max_adx", "breakout_max_adr", "breakout_min_rr", "breakout_req_rx", 
+    "breakout_max_rx_age", "breakout_atr_exp", "breakout_price_ema", 
+    "breakout_min_body", "breakout_score_bonus", "reversal_on", "reversal_observe", 
+    "rev_lots", "reversal_rv", "reversal_rv_max", "reversal_adr", "rev_req_decel", 
+    "rev_min_decel", "rev_req_rx", "rev_rx_bonus", "rev_req_diverg", 
+    "rev_diverg_bars", "rev_req_hist_flip", "rev_max_hist_age", "session_filter_on", 
+    "session_start_utc", "session_end_utc", "time_offset", "no_night_trade", 
+    "night_start_h", "night_end_h", "sunday_start_h", "fri_close_profit_h", 
+    "fri_close_profit_m", "fri_close_loss_h", "fri_close_loss_m", "fri_force_close_h", 
+    "fri_force_close_m", "data_mode", "csv_file", "csv_max_age_sec", 
+    "radar_indicator", "export_csv", "auto_fallback", "fallback_after", 
+    "show_export_btn", "auto_export", "strategy_test", "ai_url", "ai_timeout", 
+    "ai_log", "test_trade", "magic_number", "max_slippage", "max_spread", 
+    "spread_dyn_mult", "atr_mult", "atr_period", "fractal_bars", "dash_x", "dash_y", 
+    "dash_font_size", "dash_color", "dash_bg_color", "dash_bg"]
         updated = []
         for key in updatable:
             if key in data:
                 old_val = cfg.get(key)
                 new_val = data[key]
-                if key in ("use_ai", "send_feedback", "breakout_on", "reversal_on", "daily_stop_on",
-                           "dynamic_lots_on",
-                           "no_monday_trade", "no_buy", "trailing_on", "hyper_on"):
+                bool_keys = {"use_ai", "send_feedback", "daily_stop_on", "dynamic_lots_on", "no_monday_trade", "no_buy", "hyper_on", "tp_adaptive", "trailing_on", "rx_required", "rx_bonus_score", "breakout_on", "breakout_req_rx", "breakout_atr_exp", "breakout_price_ema", "reversal_on", "reversal_observe", "rev_req_decel", "rev_req_rx", "rev_rx_bonus", "rev_req_diverg", "rev_req_hist_flip", "session_filter_on", "no_night_trade", "export_csv", "auto_fallback", "show_export_btn", "auto_export", "strategy_test", "ai_log", "test_trade", "dash_bg"}
+
+                int_keys = {"aggressiveness", "ai_min_conf", "max_consec_loss", "max_concurrent", "max_per_pair", "dynamic_lookback", "tp_percent", "tp_percent_min", "max_tp_pips", "be_pips", "be_profit", "trail_step_pips", "rv_max", "max_consecutive", "rx_max_age", "breakout_min_light", "breakout_max_rv", "breakout_max_rx_age", "breakout_score_bonus", "reversal_rv", "reversal_rv_max", "rev_min_decel", "rev_diverg_bars", "rev_max_hist_age", "session_start_utc", "session_end_utc", "time_offset", "night_start_h", "night_end_h", "sunday_start_h", "fri_close_profit_h", "fri_close_profit_m", "fri_close_loss_h", "fri_close_loss_m", "fri_force_close_h", "fri_force_close_m", "data_mode", "csv_max_age_sec", "fallback_after", "ai_timeout", "magic_number", "max_slippage", "max_spread", "atr_period", "fractal_bars", "dash_x", "dash_y", "dash_font_size", "dash_color", "dash_bg_color"}
+
+                float_keys = {"loss_weight", "fixed_lots", "max_lots_cap", "max_lots_safety", "friday_lots", "afternoon_lots", "min_rr", "trail_activate", "trail_atr_mult", "adr_max", "min_ema_gap_pct", "rev_min_ema_gap_pct", "breakout_ema_gap_pct", "breakout_max_adx", "breakout_max_adr", "breakout_min_rr", "breakout_min_body", "rev_lots", "reversal_adr", "spread_dyn_mult", "atr_mult"}
+
+                str_keys = {"symbol_blacklist", "hyper_symbols", "csv_file", "radar_indicator", "ai_url"}
+
+                if key in bool_keys:
+
                     new_val = bool(new_val)
-                elif key in ("adr_max", "loss_weight", "min_rr", "fixed_lots", "max_lots_cap",
-                             "friday_lots", "afternoon_lots",
-                             "trail_activate", "trail_atr_mult"):
-                    new_val = float(new_val)
-                elif key == "symbol_blacklist":
-                    new_val = str(new_val)
-                else:
+
+                elif key in int_keys:
+
                     new_val = int(new_val)
+
+                elif key in float_keys:
+
+                    new_val = float(new_val)
+
+                elif key in str_keys:
+
+                    new_val = str(new_val)
                 cfg[key] = new_val
                 if old_val != new_val:
                     updated.append(f"{key}: {old_val} -> {new_val}")
@@ -1825,72 +1938,260 @@ tr:hover{background:#1a1a35}
   <div style="font-size:0.75em;color:#666;margin-top:4px" id="dStopDetail">-</div>
 </div></div>
 
-<div class="section"><h2>Configurazione EA</h2>
+<div class="section"><h2>Configurazione principale</h2>
 <div class="config-grid">
-  <div class="cfg-item"><label>🛑 Daily Stop<span class="tooltip"> ⓘ<span class="tooltiptext">Se acceso, il robot smette di tradare quel giorno quando ha perso troppo. Come dire &#39;basta!&#39;.</span></span></label>
-    <select id="cfgDailyStop"><option value="true">ATTIVO</option><option value="false">DISATTIVATO</option></select></div>
-  <div class="cfg-item"><label>Stile (aggressivita')<span class="tooltip"> ⓘ<span class="tooltiptext">Quanto il robot è esigente. Conservativo = pochi trade ma più sicuri. Aggressivo = tanti trade ma più rischiosi.</span></span></label>
-    <select id="cfgAggr"><option value="1">Conservativo (filtri tutti)</option><option value="2" selected>Moderato (filtri -1)</option><option value="3">Aggressivo (filtri -2)</option><option value="4">Iperconservativo (whitelist + 6 criteri rigidi)</option></select></div>
-  <div class="cfg-item"><label>Invia Feedback<span class="tooltip"> ⓘ<span class="tooltiptext">Se acceso, il robot manda i risultati al server per insegnare all&#39;IA. Lascialo SÌ.</span></span></label>
-    <select id="cfgSendFeedback"><option value="true">SI</option><option value="false">NO</option></select></div>
-  <div class="cfg-item"><label>AI Attiva<span class="tooltip"> ⓘ<span class="tooltiptext">Se acceso, l&#39;IA decide se il trade è buono. Se spento, il robot decide da solo.</span></span></label>
-    <select id="cfgAI"><option value="true">SI</option><option value="false">NO</option></select></div>
+  <div class="cfg-item"><label>Stile (aggressività)<span class="tooltip"> ⓘ<span class="tooltiptext">Quanto il robot è esigente. 1=Conservativo, 2=Moderato, 3=Aggressivo, 4=Iperconservativo.</span></span></label>
+    <input type="number" id="cfgAggressiveness" value="2" min="1" max="4" step="1"></div>
+  <div class="cfg-item"><label>AI Attiva<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, l&#39;IA decide se il trade è buono. Se DISATTIVO, il robot decide da solo.</span></span></label>
+    <select id="cfgUseAi"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
   <div class="cfg-item"><label>Confidenza minima %<span class="tooltip"> ⓘ<span class="tooltiptext">Quanto l&#39;IA deve essere sicura prima di dire OK. Più alta = meno trade ma più scelti.</span></span></label>
-    <input type="number" id="cfgMinConf" value="70" min="50" max="95"></div>
+    <input type="number" id="cfgAiMinConf" value="70" min="50" max="95" step="1"></div>
+  <div class="cfg-item"><label>Invia Feedback<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, il robot manda i risultati al server per insegnare all&#39;IA. Lascialo ATTIVO.</span></span></label>
+    <select id="cfgSendFeedback"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+  <div class="cfg-item"><label>🛑 Daily Stop<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, il robot smette di tradare quel giorno quando ha perso troppo. Come dire &#39;basta!&#39;.</span></span></label>
+    <select id="cfgDailyStopOn"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
   <div class="cfg-item"><label>Max loss consecutivi<span class="tooltip"> ⓘ<span class="tooltiptext">Dopo quante perdite di fila il robot si ferma quel giorno.</span></span></label>
-    <input type="number" id="cfgMaxCLoss" value="2" min="1" max="5"></div>
+    <input type="number" id="cfgMaxConsecLoss" value="2" min="1" max="10" step="1"></div>
   <div class="cfg-item"><label>Peso perdite (x vincite)<span class="tooltip"> ⓘ<span class="tooltiptext">Quanto contano le perdite rispetto alle vincite. 1.5 = una perdita vale come una vittoria e mezza.</span></span></label>
     <input type="number" id="cfgLossWeight" value="1.5" min="1.0" max="5.0" step="0.1"></div>
-  <div class="cfg-item"><label>RV massimo<span class="tooltip"> ⓘ<span class="tooltiptext">Quanto forte deve essere il segnale Radar. Più basso = scarta i segnali deboli.</span></span></label>
-    <input type="number" id="cfgRVMax" value="30" min="10" max="50"></div>
-  <div class="cfg-item"><label>ADR% massimo<span class="tooltip"> ⓘ<span class="tooltiptext">Quanto della giornata è già stato fatto. Sopra questa % il mercato è stanco e il robot non entra.</span></span></label>
-    <input type="number" id="cfgADRMax" value="60" min="30" max="90"></div>
-  <div class="cfg-item"><label>R:R minimo<span class="tooltip"> ⓘ<span class="tooltiptext">Quanto deve essere grande il guadagno possibile rispetto al rischio. 1.5 = guadagno 1.5 volte la perdita.</span></span></label>
-    <input type="number" id="cfgMinRR" value="1.5" min="1.0" max="3.0" step="0.1"></div>
-  <div class="cfg-item"><label>TP % ADR max<span class="tooltip"> ⓘ<span class="tooltiptext">Distanza massima del Take Profit. Più % = TP più lontano e rischioso.</span></span></label>
-    <input type="number" id="cfgTPPercent" value="35" min="10" max="100"></div>
-  <div class="cfg-item"><label>TP % ADR min<span class="tooltip"> ⓘ<span class="tooltiptext">Distanza minima del Take Profit. Più % = TP più vicino e sicuro.</span></span></label>
-    <input type="number" id="cfgTPPercentMin" value="20" min="10" max="100"></div>
-  <div class="cfg-item"><label>TP max in pip (0=off)<span class="tooltip"> ⓘ<span class="tooltiptext">Numero massimo di pip per il TP. 0 = usa la % ADR.</span></span></label>
-    <input type="number" id="cfgMaxTPPips" value="0" min="0" max="200"></div>
+  <div class="cfg-item"><label>Max trade aperti<span class="tooltip"> ⓘ<span class="tooltiptext">Quanti trade il robot può tenere aperti contemporaneamente.</span></span></label>
+    <input type="number" id="cfgMaxConcurrent" value="10" min="1" max="28" step="1"></div>
+  <div class="cfg-item"><label>Max trade per coppia<span class="tooltip"> ⓘ<span class="tooltiptext">Quanti trade può aprire sullo stesso cross contemporaneamente.</span></span></label>
+    <input type="number" id="cfgMaxPerPair" value="1" min="1" max="5" step="1"></div>
+</div></div>
+<div class="section"><h2>Lotto, rischio e fasce</h2>
+<div class="config-grid">
   <div class="cfg-item"><label>Lotto base<span class="tooltip"> ⓘ<span class="tooltiptext">Quanto compra o vende in un trade normale.</span></span></label>
     <input type="number" id="cfgFixedLots" value="0.01" min="0.01" max="1.0" step="0.01"></div>
   <div class="cfg-item"><label>Lotto max cap<span class="tooltip"> ⓘ<span class="tooltiptext">Il robot non aprirà mai un trade più grande di questo, nemmeno se tutto dice di farlo.</span></span></label>
     <input type="number" id="cfgMaxLotsCap" value="0.05" min="0.01" max="1.0" step="0.01"></div>
-  <div class="cfg-item"><label>Lotto dinamico<span class="tooltip"> ⓘ<span class="tooltiptext">Se acceso, il robot alza o abbassa il lotto da solo in base a quanto sta vincendo ultimamente.</span></span></label>
-    <select id="cfgDynamicLots"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+  <div class="cfg-item"><label>Lotto max di sicurezza<span class="tooltip"> ⓘ<span class="tooltiptext">Protezione assoluta contro errori o valori pazzi del lotto.</span></span></label>
+    <input type="number" id="cfgMaxLotsSafety" value="0.05" min="0.01" max="1.0" step="0.01"></div>
+  <div class="cfg-item"><label>Lotto dinamico<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, il robot alza o abbassa il lotto da solo in base a quanto sta vincendo ultimamente.</span></span></label>
+    <select id="cfgDynamicLotsOn"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
   <div class="cfg-item"><label>Lotto dyn lookback<span class="tooltip"> ⓘ<span class="tooltiptext">Quanti trade passati guarda il robot per decidere il lotto dinamico.</span></span></label>
-    <input type="number" id="cfgDynamicLookback" value="20" min="5" max="100"></div>
-  <div class="cfg-item"><label>🗓️ Lotto Venerdi<span class="tooltip"> ⓘ<span class="tooltiptext">0.00 = venerdì chiuso. 0.01 = trade il venerdì con lotto piccolo.</span></span></label>
-    <input type="number" id="cfgFridayLots" value="0.01" min="0" max="1.0" step="0.01"></div>
+    <input type="number" id="cfgDynamicLookback" value="20" min="5" max="200" step="1"></div>
+  <div class="cfg-item"><label>🗓️ Lotto Venerdi<span class="tooltip"> ⓘ<span class="tooltiptext">0.00 = venerdì chiuso. 0.01 = trade il venerdì con lotto piccolo (fino alle 22:30 Italia).</span></span></label>
+    <input type="number" id="cfgFridayLots" value="0.01" min="0.0" max="1.0" step="0.01"></div>
   <div class="cfg-item"><label>🌇 Lotto Pomeriggio<span class="tooltip"> ⓘ<span class="tooltiptext">0.00 = pomeriggio chiuso (fuori dalla sessione principale). 0.01 = trade con lotto piccolo.</span></span></label>
-    <input type="number" id="cfgAfternoonLots" value="0.01" min="0" max="1.0" step="0.01"></div>
-  <div class="cfg-item"><label>🚫 Lunedi<span class="tooltip"> ⓘ<span class="tooltiptext">Se acceso, il lunedì il robot non apre nuovi trade.</span></span></label>
-    <select id="cfgNoMonday"><option value="true">Bloccato</option><option value="false">Aperto</option></select></div>
-  <div class="cfg-item"><label>🚫 BUY<span class="tooltip"> ⓘ<span class="tooltiptext">Se acceso, il robot fa solo vendite (SELL), nessun acquisto (BUY).</span></span></label>
-    <select id="cfgNoBuy"><option value="true">Bloccato</option><option value="false">Aperto</option></select></div>
+    <input type="number" id="cfgAfternoonLots" value="0.01" min="0.0" max="1.0" step="0.01"></div>
+</div></div>
+<div class="section"><h2>Filtri giorno e direzione</h2>
+<div class="config-grid">
+  <div class="cfg-item"><label>🚫 Filtro Lunedi<span class="tooltip"> ⓘ<span class="tooltiptext">ATTIVO = il lunedì il robot sta fermo, nessun trade. DISATTIVO = il lunedì trade normali. Esempio: se metti ATTIVO, lunedì nessun trade.</span></span></label>
+    <select id="cfgNoMondayTrade"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+  <div class="cfg-item"><label>🚫 Filtro BUY<span class="tooltip"> ⓘ<span class="tooltiptext">ATTIVO = il robot vende solo (SELL), nessun acquisto (BUY). DISATTIVO = il robot può anche comprare (BUY). Esempio: se metti ATTIVO, solo SELL.</span></span></label>
+    <select id="cfgNoBuy"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
   <div class="cfg-item"><label>Blacklist simboli<span class="tooltip"> ⓘ<span class="tooltiptext">Scrivi qui i simboli che il robot deve evitare, separati da virgola (es. GBPAUD+,AUDJPY+).</span></span></label>
-    <input type="text" id="cfgSymbolBlacklist" value="" placeholder="GBPAUD+,AUDJPY+"></div>
-  <div class="cfg-item"><label>Trailing Stop<span class="tooltip"> ⓘ<span class="tooltiptext">Se acceso, il robot sposta lo Stop Loss per proteggere i profitti quando il trade va bene.</span></span></label>
+    <input type="text" id="cfgSymbolBlacklist" value="" placeholder=""></div>
+  <div class="cfg-item"><label>Iperconservativo ON<span class="tooltip"> ⓘ<span class="tooltiptext">Modalità super-selettiva: solo simboli in whitelist e 6 regole rigide.</span></span></label>
+    <select id="cfgHyperOn"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+  <div class="cfg-item"><label>Whitelist ipercons.<span class="tooltip"> ⓘ<span class="tooltiptext">Simboli permessi quando la modalità iperconservativo è attiva. Separati da virgola.</span></span></label>
+    <input type="text" id="cfgHyperSymbols" value="CHFJPY+,EURCAD+,NZDUSD+" placeholder="CHFJPY+,EURCAD+,NZDUSD+"></div>
+</div></div>
+<div class="section"><h2>TP, RR, Trailing e Break-Even</h2>
+<div class="config-grid">
+  <div class="cfg-item"><label>TP % ADR max<span class="tooltip"> ⓘ<span class="tooltiptext">Distanza massima del Take Profit. Più % = TP più lontano e rischioso.</span></span></label>
+    <input type="number" id="cfgTpPercent" value="35" min="10" max="100" step="1"></div>
+  <div class="cfg-item"><label>TP % ADR min<span class="tooltip"> ⓘ<span class="tooltiptext">Distanza minima del Take Profit. Più % = TP più vicino e sicuro.</span></span></label>
+    <input type="number" id="cfgTpPercentMin" value="20" min="10" max="100" step="1"></div>
+  <div class="cfg-item"><label>TP adattivo<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, il robot sceglie il TP tra min e max in base alla forza del trend.</span></span></label>
+    <select id="cfgTpAdaptive"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+  <div class="cfg-item"><label>TP max in pip (0=off)<span class="tooltip"> ⓘ<span class="tooltiptext">Numero massimo di pip per il TP. 0 = usa la % ADR.</span></span></label>
+    <input type="number" id="cfgMaxTpPips" value="0" min="0" max="200" step="1"></div>
+  <div class="cfg-item"><label>R:R minimo<span class="tooltip"> ⓘ<span class="tooltiptext">Quanto deve essere grande il guadagno possibile rispetto al rischio. 1.5 = guadagno 1.5 volte la perdita.</span></span></label>
+    <input type="number" id="cfgMinRr" value="1.0" min="0.5" max="3.0" step="0.1"></div>
+  <div class="cfg-item"><label>Break-Even pip<span class="tooltip"> ⓘ<span class="tooltiptext">Dopo quanti pip di profitto il robot sposta lo stop a protezione del capitale.</span></span></label>
+    <input type="number" id="cfgBePips" value="15" min="0" max="100" step="1"></div>
+  <div class="cfg-item"><label>Break-Even profitto bloccato<span class="tooltip"> ⓘ<span class="tooltiptext">Quanti pip di profitto blocca quando attiva il break-even.</span></span></label>
+    <input type="number" id="cfgBeProfit" value="5" min="0" max="50" step="1"></div>
+  <div class="cfg-item"><label>Trailing Stop<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, il robot sposta lo Stop Loss per proteggere i profitti quando il trade va bene.</span></span></label>
     <select id="cfgTrailingOn"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
   <div class="cfg-item"><label>Trail attiva a R<span class="tooltip"> ⓘ<span class="tooltiptext">Dopo quanto guadagno (in volte il rischio) il trailing stop si attiva.</span></span></label>
     <input type="number" id="cfgTrailActivate" value="1.5" min="0.5" max="5.0" step="0.1"></div>
   <div class="cfg-item"><label>Trail ATR mult<span class="tooltip"> ⓘ<span class="tooltiptext">Distanza del trailing stop dall&#39;EMA, misurata con l&#39;ATR. Più basso = più stretto.</span></span></label>
-    <input type="number" id="cfgTrailATRMult" value="0.5" min="0.1" max="3.0" step="0.1"></div>
+    <input type="number" id="cfgTrailAtrMult" value="0.5" min="0.1" max="3.0" step="0.1"></div>
   <div class="cfg-item"><label>Trail step pip<span class="tooltip"> ⓘ<span class="tooltiptext">Il robot muove lo stop solo se migliora di almeno questi pip. Evita troppi spostamenti.</span></span></label>
-    <input type="number" id="cfgTrailStepPips" value="5" min="0" max="50"></div>
-  <div class="cfg-item"><label>Iperconservativo ON<span class="tooltip"> ⓘ<span class="tooltiptext">Modalità super-selettiva: solo simboli in whitelist e 6 regole rigide.</span></span></label>
-    <select id="cfgHyperOn"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
-  <div class="cfg-item"><label>Breakout<span class="tooltip"> ⓘ<span class="tooltiptext">Modulo che cerca i movimenti che partono dopo il grigio.</span></span></label>
-    <select id="cfgBrk"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
-  <div class="cfg-item"><label>Reversal<span class="tooltip"> ⓘ<span class="tooltiptext">Modulo che cerca i ribaltamenti di trend estremo.</span></span></label>
-    <select id="cfgRev"><option value="true">Attivo</option><option value="false" selected>Disattivo</option></select></div>
-  <div class="cfg-item"><label>Max trade aperti<span class="tooltip"> ⓘ<span class="tooltiptext">Quanti trade il robot può tenere aperti contemporaneamente.</span></span></label>
-    <input type="number" id="cfgMaxConcurrent" value="10" min="1" max="28"></div>
-</div>
+    <input type="number" id="cfgTrailStepPips" value="5" min="0" max="50" step="1"></div>
+</div></div>
+<div class="section"><h2>Filtri standard</h2>
+<div class="config-grid">
+  <div class="cfg-item"><label>RV massimo<span class="tooltip"> ⓘ<span class="tooltiptext">Quanto forte deve essere il segnale Radar. Più basso = scarta i segnali troppo deboli.</span></span></label>
+    <input type="number" id="cfgRvMax" value="30" min="10" max="100" step="1"></div>
+  <div class="cfg-item"><label>ADR% massimo<span class="tooltip"> ⓘ<span class="tooltiptext">Quanto della giornata è già stato fatto. Sopra questa % il mercato è stanco e il robot non entra.</span></span></label>
+    <input type="number" id="cfgAdrMax" value="50.0" min="30" max="150" step="1"></div>
+  <div class="cfg-item"><label>Max candele consecutive<span class="tooltip"> ⓘ<span class="tooltiptext">Se il trend dura più di N candele, il robot lo considera stanco e non entra.</span></span></label>
+    <input type="number" id="cfgMaxConsecutive" value="15" min="5" max="50" step="1"></div>
+  <div class="cfg-item"><label>Min gap EMA %<span class="tooltip"> ⓘ<span class="tooltiptext">Distanza minima tra EMA21 e EMA200. Sotto = trend troppo debole.</span></span></label>
+    <input type="number" id="cfgMinEmaGapPct" value="0.05" min="0.0" max="1.0" step="0.01"></div>
+  <div class="cfg-item"><label>Min gap EMA % (Reversal)<span class="tooltip"> ⓘ<span class="tooltiptext">Distanza minima EMA per il modulo Reversal. Serve un trend definito da invertire.</span></span></label>
+    <input type="number" id="cfgRevMinEmaGapPct" value="0.1" min="0.0" max="1.0" step="0.01"></div>
+</div></div>
+<div class="section"><h2>Filtro RX</h2>
+<div class="config-grid">
+  <div class="cfg-item"><label>RX richiesto<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, il robot entra solo se c&#39;è un segnale RX (nuovi massimi/minimi).</span></span></label>
+    <select id="cfgRxRequired"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+  <div class="cfg-item"><label>RX eta max (candele)<span class="tooltip"> ⓘ<span class="tooltiptext">Quanto può essere vecchio il segnale RX per essere ancora valido.</span></span></label>
+    <input type="number" id="cfgRxMaxAge" value="4" min="1" max="10" step="1"></div>
+  <div class="cfg-item"><label>RX bonus punteggio<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, il segnale RX aumenta il punteggio interno del trade.</span></span></label>
+    <select id="cfgRxBonusScore"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+</div></div>
+<div class="section"><h2>Modulo Breakout</h2>
+<div class="config-grid">
+  <div class="cfg-item"><label>Breakout attivo<span class="tooltip"> ⓘ<span class="tooltiptext">Modulo che cerca i movimenti che partono dopo il grigio.</span></span></label>
+    <select id="cfgBreakoutOn"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+  <div class="cfg-item"><label>Breakout min candele LIGHT<span class="tooltip"> ⓘ<span class="tooltiptext">Quante candele LIGHT consecutive servono per considerare un breakout.</span></span></label>
+    <input type="number" id="cfgBreakoutMinLight" value="2" min="1" max="10" step="1"></div>
+  <div class="cfg-item"><label>Breakout max gap EMA %<span class="tooltip"> ⓘ<span class="tooltiptext">Gap EMA massimo accettato per un breakout. Sopra = trend troppo forte.</span></span></label>
+    <input type="number" id="cfgBreakoutEmaGapPct" value="0.2" min="0.0" max="1.0" step="0.01"></div>
+  <div class="cfg-item"><label>Breakout max RV<span class="tooltip"> ⓘ<span class="tooltiptext">Radar Value massimo per un breakout. Sopra = segnale troppo forte/esaurito.</span></span></label>
+    <input type="number" id="cfgBreakoutMaxRv" value="15" min="5" max="50" step="1"></div>
+  <div class="cfg-item"><label>Breakout max ADX<span class="tooltip"> ⓘ<span class="tooltiptext">ADX massimo per un breakout. Sopra = trend già troppo maturo.</span></span></label>
+    <input type="number" id="cfgBreakoutMaxAdx" value="25" min="10" max="60" step="1"></div>
+  <div class="cfg-item"><label>Breakout max ADR%<span class="tooltip"> ⓘ<span class="tooltiptext">ADR% massimo per un breakout. Sopra = mercato stanco.</span></span></label>
+    <input type="number" id="cfgBreakoutMaxAdr" value="50" min="30" max="150" step="1"></div>
+  <div class="cfg-item"><label>Breakout R:R minimo<span class="tooltip"> ⓘ<span class="tooltiptext">Rapporto rischio/rendimento minimo per il modulo Breakout.</span></span></label>
+    <input type="number" id="cfgBreakoutMinRr" value="1.8" min="1.0" max="3.0" step="0.1"></div>
+  <div class="cfg-item"><label>Breakout richiede RX<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, il breakout richiede anche un segnale RX.</span></span></label>
+    <select id="cfgBreakoutReqRx"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+  <div class="cfg-item"><label>Breakout RX eta max<span class="tooltip"> ⓘ<span class="tooltiptext">Eta massima del segnale RX per il breakout.</span></span></label>
+    <input type="number" id="cfgBreakoutMaxRxAge" value="2" min="1" max="10" step="1"></div>
+  <div class="cfg-item"><label>Breakout ATR in espansione<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, richiede che l&#39;ATR sia in espansione.</span></span></label>
+    <select id="cfgBreakoutAtrExp"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+  <div class="cfg-item"><label>Breakout prezzo vs EMA<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, il prezzo deve essere dalla parte giusta dell&#39;EMA.</span></span></label>
+    <select id="cfgBreakoutPriceEma"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+  <div class="cfg-item"><label>Breakout min corpo candela<span class="tooltip"> ⓘ<span class="tooltiptext">Corpo minimo della candela rispetto all&#39;ATR.</span></span></label>
+    <input type="number" id="cfgBreakoutMinBody" value="0.3" min="0.1" max="1.0" step="0.05"></div>
+  <div class="cfg-item"><label>Breakout bonus punteggio<span class="tooltip"> ⓘ<span class="tooltiptext">Bonus punteggio interno del modulo Breakout (solitamente negativo = più selettivo).</span></span></label>
+    <input type="number" id="cfgBreakoutScoreBonus" value="-80" min="-200" max="50" step="5"></div>
+</div></div>
+<div class="section"><h2>Modulo Reversal</h2>
+<div class="config-grid">
+  <div class="cfg-item"><label>Reversal attivo<span class="tooltip"> ⓘ<span class="tooltiptext">Modulo che cerca i ribaltamenti di trend estremo.</span></span></label>
+    <select id="cfgReversalOn"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+  <div class="cfg-item"><label>Reversal solo osservazione<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, il Reversal logga i segnali ma NON apre trade.</span></span></label>
+    <select id="cfgReversalObserve"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+  <div class="cfg-item"><label>Reversal lotto<span class="tooltip"> ⓘ<span class="tooltiptext">Lotto dedicato al Reversal. 0 = usa il lotto principale.</span></span></label>
+    <input type="number" id="cfgRevLots" value="0.01" min="0.0" max="1.0" step="0.01"></div>
+  <div class="cfg-item"><label>Reversal RV minimo<span class="tooltip"> ⓘ<span class="tooltiptext">Radar Value minimo per considerare un trend estremo da invertire.</span></span></label>
+    <input type="number" id="cfgReversalRv" value="65" min="30" max="150" step="1"></div>
+  <div class="cfg-item"><label>Reversal RV massimo<span class="tooltip"> ⓘ<span class="tooltiptext">Sopra questo RV il robot pensa che il trend sia già invertito o il dato sia anomalo.</span></span></label>
+    <input type="number" id="cfgReversalRvMax" value="120" min="50" max="200" step="1"></div>
+  <div class="cfg-item"><label>Reversal ADR% minimo<span class="tooltip"> ⓘ<span class="tooltiptext">Il mercato deve aver superato la media giornaliera per un reversal valido.</span></span></label>
+    <input type="number" id="cfgReversalAdr" value="90.0" min="50" max="150" step="1"></div>
+  <div class="cfg-item"><label>Reversal richiede decelerazione<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, richiede che il trend stia perdendo velocità.</span></span></label>
+    <select id="cfgRevReqDecel"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+  <div class="cfg-item"><label>Reversal decelerazione min<span class="tooltip"> ⓘ<span class="tooltiptext">Quanto deve essere la decelerazione del Radar Value.</span></span></label>
+    <input type="number" id="cfgRevMinDecel" value="5" min="1" max="50" step="1"></div>
+  <div class="cfg-item"><label>Reversal richiede RX<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, richiede un segnale RX (nuovo max/min) per il reversal.</span></span></label>
+    <select id="cfgRevReqRx"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+  <div class="cfg-item"><label>Reversal RX bonus<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, il segnale RX aumenta il punteggio del reversal.</span></span></label>
+    <select id="cfgRevRxBonus"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+  <div class="cfg-item"><label>Reversal richiede divergenza<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, richiede una divergenza per confermare il reversal.</span></span></label>
+    <select id="cfgRevReqDiverg"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+  <div class="cfg-item"><label>Reversal candele divergenza<span class="tooltip"> ⓘ<span class="tooltiptext">Finestra di candele in cui cercare la divergenza.</span></span></label>
+    <input type="number" id="cfgRevDivergBars" value="8" min="3" max="30" step="1"></div>
+  <div class="cfg-item"><label>Reversal richiede flip istogramma<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, richiede che l&#39;istogramma abbia cambiato colore recentemente.</span></span></label>
+    <select id="cfgRevReqHistFlip"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+  <div class="cfg-item"><label>Reversal eta max flip<span class="tooltip"> ⓘ<span class="tooltiptext">Quante candele fa può essere avvenuto il cambio colore.</span></span></label>
+    <input type="number" id="cfgRevMaxHistAge" value="3" min="1" max="10" step="1"></div>
+</div></div>
+<div class="section"><h2>Orari e sessione</h2>
+<div class="config-grid">
+  <div class="cfg-item"><label>Filtro sessione<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, il robot trade solo nella sessione principale (lotto normale). Fuori = pomeriggio.</span></span></label>
+    <select id="cfgSessionFilterOn"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+  <div class="cfg-item"><label>Sessione inizio UTC<span class="tooltip"> ⓘ<span class="tooltiptext">Ora di inizio della sessione principale (UTC).</span></span></label>
+    <input type="number" id="cfgSessionStartUtc" value="9" min="0" max="23" step="1"></div>
+  <div class="cfg-item"><label>Sessione fine UTC<span class="tooltip"> ⓘ<span class="tooltiptext">Ora di fine della sessione principale (UTC). Dopo = pomeriggio.</span></span></label>
+    <input type="number" id="cfgSessionEndUtc" value="14" min="0" max="23" step="1"></div>
+  <div class="cfg-item"><label>Fuso orario broker vs Italia<span class="tooltip"> ⓘ<span class="tooltiptext">Differenza di ore tra l&#39;orario del broker e l&#39;orario italiano.</span></span></label>
+    <input type="number" id="cfgTimeOffset" value="-1" min="-12" max="12" step="1"></div>
+  <div class="cfg-item"><label>Blocco notte<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, il robot non trade di notte (spread alti, poca liquidità).</span></span></label>
+    <select id="cfgNoNightTrade"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+  <div class="cfg-item"><label>Notte inizio (Italia)<span class="tooltip"> ⓘ<span class="tooltiptext">Ora italiana di inizio del blocco notturno.</span></span></label>
+    <input type="number" id="cfgNightStartH" value="23" min="0" max="23" step="1"></div>
+  <div class="cfg-item"><label>Notte fine (Italia)<span class="tooltip"> ⓘ<span class="tooltiptext">Ora italiana di fine del blocco notturno.</span></span></label>
+    <input type="number" id="cfgNightEndH" value="7" min="0" max="23" step="1"></div>
+  <div class="cfg-item"><label>Domenica inizio (Italia)<span class="tooltip"> ⓘ<span class="tooltiptext">Ora italiana in cui la domenica sera il robot può ricominciare a tradare.</span></span></label>
+    <input type="number" id="cfgSundayStartH" value="23" min="0" max="23" step="1"></div>
+  <div class="cfg-item"><label>Ven chiudi profitto ora<span class="tooltip"> ⓘ<span class="tooltiptext">Ora italiana in cui il venerdì chiude i trade in profitto.</span></span></label>
+    <input type="number" id="cfgFriCloseProfitH" value="20" min="0" max="23" step="1"></div>
+  <div class="cfg-item"><label>Ven chiudi profitto min<span class="tooltip"> ⓘ<span class="tooltiptext">Minuti dell&#39;ora in cui chiudere i trade in profitto il venerdì.</span></span></label>
+    <input type="number" id="cfgFriCloseProfitM" value="0" min="0" max="59" step="1"></div>
+  <div class="cfg-item"><label>Ven chiudi perdita ora<span class="tooltip"> ⓘ<span class="tooltiptext">Ora italiana in cui il venerdì chiude i trade in perdita.</span></span></label>
+    <input type="number" id="cfgFriCloseLossH" value="22" min="0" max="23" step="1"></div>
+  <div class="cfg-item"><label>Ven chiudi perdita min<span class="tooltip"> ⓘ<span class="tooltiptext">Minuti dell&#39;ora in cui chiudere le perdite il venerdì.</span></span></label>
+    <input type="number" id="cfgFriCloseLossM" value="0" min="0" max="59" step="1"></div>
+  <div class="cfg-item"><label>Ven chiusura forzata ora<span class="tooltip"> ⓘ<span class="tooltiptext">Ora italiana di chiusura forzata totale del venerdì.</span></span></label>
+    <input type="number" id="cfgFriForceCloseH" value="22" min="0" max="23" step="1"></div>
+  <div class="cfg-item"><label>Ven chiusura forzata min<span class="tooltip"> ⓘ<span class="tooltiptext">Minuti dell&#39;ora di chiusura forzata del venerdì.</span></span></label>
+    <input type="number" id="cfgFriForceCloseM" value="30" min="0" max="59" step="1"></div>
+</div></div>
+<div class="section"><h2>Dati, AI e log</h2>
+<div class="config-grid">
+  <div class="cfg-item"><label>Fonte dati<span class="tooltip"> ⓘ<span class="tooltiptext">0=CSV, 1=Auto, 2=CSV forzato. Lascia 1.</span></span></label>
+    <input type="number" id="cfgDataMode" value="1" min="0" max="2" step="1"></div>
+  <div class="cfg-item"><label>Nome file CSV<span class="tooltip"> ⓘ<span class="tooltiptext">Nome del file CSV con i dati dell&#39;indicatore.</span></span></label>
+    <input type="text" id="cfgCsvFile" value="AI_M15_LIGHT.csv"></div>
+  <div class="cfg-item"><label>CSV eta max (sec)<span class="tooltip"> ⓘ<span class="tooltiptext">0 = illimitata. Altrimenti scarta il CSV più vecchio di N secondi.</span></span></label>
+    <input type="number" id="cfgCsvMaxAgeSec" value="0" min="0" max="3600" step="60"></div>
+  <div class="cfg-item"><label>Nome indicatore Radar<span class="tooltip"> ⓘ<span class="tooltiptext">Nome esatto dell&#39;indicatore Radar su MT4.</span></span></label>
+    <input type="text" id="cfgRadarIndicator" value="THE_PROFIT_RADAR_PRO_by_ULTIMA_MARKETS_v2_7"></div>
+  <div class="cfg-item"><label>Esporta CSV<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, l&#39;EA esporta i dati su CSV.</span></span></label>
+    <select id="cfgExportCsv"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+  <div class="cfg-item"><label>Fallback automatico<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, passa al CSV se i dati live mancano.</span></span></label>
+    <select id="cfgAutoFallback"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+  <div class="cfg-item"><label>Fallback dopo N tentativi<span class="tooltip"> ⓘ<span class="tooltiptext">Dopo quanti fallimenti dati live usa il CSV.</span></span></label>
+    <input type="number" id="cfgFallbackAfter" value="1" min="1" max="10" step="1"></div>
+  <div class="cfg-item"><label>Mostra pulsante Export<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, mostra il pulsante Export sul grafico MT4.</span></span></label>
+    <select id="cfgShowExportBtn"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+  <div class="cfg-item"><label>Export automatico<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, esporta i dati automaticamente ad ogni candela.</span></span></label>
+    <select id="cfgAutoExport"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+  <div class="cfg-item"><label>Modalita Strategy Tester<span class="tooltip"> ⓘ<span class="tooltiptext">ATTIVO solo per testare in Strategy Tester.</span></span></label>
+    <select id="cfgStrategyTest"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+  <div class="cfg-item"><label>URL server AI<span class="tooltip"> ⓘ<span class="tooltiptext">Indirizzo del server AI su Render.</span></span></label>
+    <input type="text" id="cfgAiUrl" value="https://profit-radar-ai.onrender.com/predict"></div>
+  <div class="cfg-item"><label>Timeout AI (ms)<span class="tooltip"> ⓘ<span class="tooltiptext">Quanti millisecondi aspetta la risposta dell&#39;IA prima di arrendersi.</span></span></label>
+    <input type="number" id="cfgAiTimeout" value="18000" min="1000" max="60000" step="1000"></div>
+  <div class="cfg-item"><label>Log AI dettagliato<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, scrive nel journal di MT4 i dettagli delle chiamate AI.</span></span></label>
+    <select id="cfgAiLog"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+  <div class="cfg-item"><label>Apri trade di test<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, all&#39;avvio apre un trade di test. Utile solo per debug.</span></span></label>
+    <select id="cfgTestTrade"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+</div></div>
+<div class="section"><h2>Tecnici e sicurezza</h2>
+<div class="config-grid">
+  <div class="cfg-item"><label>Magic Number<span class="tooltip"> ⓘ<span class="tooltiptext">ID univoco dell&#39;EA. Non cambiarlo a meno che non sai perché.</span></span></label>
+    <input type="number" id="cfgMagicNumber" value="270101" min="100000" max="999999" step="1"></div>
+  <div class="cfg-item"><label>Max slippage (points)<span class="tooltip"> ⓘ<span class="tooltiptext">Slippage massimo accettato dall&#39;EA.</span></span></label>
+    <input type="number" id="cfgMaxSlippage" value="3" min="0" max="50" step="1"></div>
+  <div class="cfg-item"><label>Max spread (points)<span class="tooltip"> ⓘ<span class="tooltiptext">Spread massimo assoluto per aprire un trade.</span></span></label>
+    <input type="number" id="cfgMaxSpread" value="30" min="5" max="200" step="1"></div>
+  <div class="cfg-item"><label>Spread dinamico mult<span class="tooltip"> ⓘ<span class="tooltiptext">Blocca il trade se lo spread è più alto di N volte la media. 0 = disattivato.</span></span></label>
+    <input type="number" id="cfgSpreadDynMult" value="3.0" min="0.0" max="10.0" step="0.5"></div>
+  <div class="cfg-item"><label>ATR mult per SL<span class="tooltip"> ⓘ<span class="tooltiptext">Stop Loss = ATR x questo valore.</span></span></label>
+    <input type="number" id="cfgAtrMult" value="1.2" min="0.5" max="5.0" step="0.1"></div>
+  <div class="cfg-item"><label>Periodo ATR<span class="tooltip"> ⓘ<span class="tooltiptext">Periodo dell&#39;indicatore ATR per calcolare SL e trailing.</span></span></label>
+    <input type="number" id="cfgAtrPeriod" value="14" min="5" max="50" step="1"></div>
+  <div class="cfg-item"><label>Candele fractal SL<span class="tooltip"> ⓘ<span class="tooltiptext">Quante candele indietro guardare per trovare il fractal per lo Stop Loss.</span></span></label>
+    <input type="number" id="cfgFractalBars" value="50" min="10" max="200" step="10"></div>
+</div></div>
+<div class="section"><h2>Dashboard grafico MT4</h2>
+<div class="config-grid">
+  <div class="cfg-item"><label>Dashboard X (pixel)<span class="tooltip"> ⓘ<span class="tooltiptext">Posizione orizzontale della dashboard sul grafico MT4.</span></span></label>
+    <input type="number" id="cfgDashX" value="1300" min="0" max="3000" step="10"></div>
+  <div class="cfg-item"><label>Dashboard Y (pixel)<span class="tooltip"> ⓘ<span class="tooltiptext">Posizione verticale della dashboard sul grafico MT4.</span></span></label>
+    <input type="number" id="cfgDashY" value="30" min="0" max="2000" step="10"></div>
+  <div class="cfg-item"><label>Dashboard font size<span class="tooltip"> ⓘ<span class="tooltiptext">Dimensione del testo della dashboard su MT4.</span></span></label>
+    <input type="number" id="cfgDashFontSize" value="9" min="6" max="20" step="1"></div>
+  <div class="cfg-item"><label>Dashboard colore testo<span class="tooltip"> ⓘ<span class="tooltiptext">Colore del testo della dashboard su MT4.</span></span></label>
+    <select id="cfgDashColor"><option value="16777215" selected>Bianco</option><option value="0">Nero</option><option value="255">Rosso</option><option value="65280">Verde lime</option><option value="16711680">Blu</option><option value="65535">Giallo</option><option value="16776960">Ciano</option><option value="16711935">Magenta</option><option value="42495">Arancione</option><option value="9109504">Blu scuro</option><option value="3100495">Grigio ardesia</option></select></div>
+  <div class="cfg-item"><label>Dashboard colore sfondo<span class="tooltip"> ⓘ<span class="tooltiptext">Colore dello sfondo della dashboard su MT4.</span></span></label>
+    <select id="cfgDashBgColor"><option value="16777215">Bianco</option><option value="0">Nero</option><option value="255">Rosso</option><option value="65280">Verde lime</option><option value="16711680">Blu</option><option value="65535">Giallo</option><option value="16776960">Ciano</option><option value="16711935">Magenta</option><option value="42495">Arancione</option><option value="9109504">Blu scuro</option><option value="3100495">Grigio ardesia</option></select></div>
+  <div class="cfg-item"><label>Dashboard sfondo<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, mostra lo sfondo della dashboard su MT4.</span></span></label>
+    <select id="cfgDashBg"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
+</div></div>
 <div class="btn-row"><button class="btn btn-blue" onclick="saveAllConfig()">💾 Salva Configurazione</button>
   <span id="cfgMsg" style="color:#81c784;font-size:0.8em;align-self:center"></span></div>
-</div>
 
 <div class="section"><h2>Ultimi 20 Trade</h2>
 <div style="overflow-x:auto"><table>
@@ -2017,37 +2318,114 @@ function refresh(){
 }
 function saveAllConfig(){
   const cfg={
-    daily_stop_on:document.getElementById('cfgDailyStop').value==='true',
-    aggressiveness:parseInt(document.getElementById('cfgAggr').value),
+    aggressiveness:parseInt(document.getElementById('cfgAggressiveness').value),
+    use_ai:document.getElementById('cfgUseAi').value==='true',
+    ai_min_conf:parseInt(document.getElementById('cfgAiMinConf').value),
     send_feedback:document.getElementById('cfgSendFeedback').value==='true',
-    use_ai:document.getElementById('cfgAI').value==='true',
-    ai_min_conf:parseInt(document.getElementById('cfgMinConf').value),
-    max_consec_loss:parseInt(document.getElementById('cfgMaxCLoss').value),
+    daily_stop_on:document.getElementById('cfgDailyStopOn').value==='true',
+    max_consec_loss:parseInt(document.getElementById('cfgMaxConsecLoss').value),
     loss_weight:parseFloat(document.getElementById('cfgLossWeight').value),
-    rv_max:parseInt(document.getElementById('cfgRVMax').value),
-    adr_max:parseFloat(document.getElementById('cfgADRMax').value),
-    min_rr:parseFloat(document.getElementById('cfgMinRR').value),
-    tp_percent:parseInt(document.getElementById('cfgTPPercent').value),
-    tp_percent_min:parseInt(document.getElementById('cfgTPPercentMin').value),
-    max_tp_pips:parseInt(document.getElementById('cfgMaxTPPips').value),
-    breakout_on:document.getElementById('cfgBrk').value==='true',
-    reversal_on:document.getElementById('cfgRev').value==='true',
-    hyper_on:document.getElementById('cfgHyperOn').value==='true',
+    max_concurrent:parseInt(document.getElementById('cfgMaxConcurrent').value),
+    max_per_pair:parseInt(document.getElementById('cfgMaxPerPair').value),
     fixed_lots:parseFloat(document.getElementById('cfgFixedLots').value),
     max_lots_cap:parseFloat(document.getElementById('cfgMaxLotsCap').value),
-    dynamic_lots_on:document.getElementById('cfgDynamicLots').value==='true',
+    max_lots_safety:parseFloat(document.getElementById('cfgMaxLotsSafety').value),
+    dynamic_lots_on:document.getElementById('cfgDynamicLotsOn').value==='true',
     dynamic_lookback:parseInt(document.getElementById('cfgDynamicLookback').value),
     friday_lots:parseFloat(document.getElementById('cfgFridayLots').value),
     afternoon_lots:parseFloat(document.getElementById('cfgAfternoonLots').value),
-    no_monday_trade:document.getElementById('cfgNoMonday').value==='true',
+    no_monday_trade:document.getElementById('cfgNoMondayTrade').value==='true',
     no_buy:document.getElementById('cfgNoBuy').value==='true',
     symbol_blacklist:document.getElementById('cfgSymbolBlacklist').value,
+    hyper_on:document.getElementById('cfgHyperOn').value==='true',
+    hyper_symbols:document.getElementById('cfgHyperSymbols').value,
+    tp_percent:parseInt(document.getElementById('cfgTpPercent').value),
+    tp_percent_min:parseInt(document.getElementById('cfgTpPercentMin').value),
+    tp_adaptive:document.getElementById('cfgTpAdaptive').value==='true',
+    max_tp_pips:parseInt(document.getElementById('cfgMaxTpPips').value),
+    min_rr:parseFloat(document.getElementById('cfgMinRr').value),
+    be_pips:parseInt(document.getElementById('cfgBePips').value),
+    be_profit:parseInt(document.getElementById('cfgBeProfit').value),
     trailing_on:document.getElementById('cfgTrailingOn').value==='true',
     trail_activate:parseFloat(document.getElementById('cfgTrailActivate').value),
-    trail_atr_mult:parseFloat(document.getElementById('cfgTrailATRMult').value),
+    trail_atr_mult:parseFloat(document.getElementById('cfgTrailAtrMult').value),
     trail_step_pips:parseInt(document.getElementById('cfgTrailStepPips').value),
-    max_concurrent:parseInt(document.getElementById('cfgMaxConcurrent').value)
-  };
+    rv_max:parseInt(document.getElementById('cfgRvMax').value),
+    adr_max:parseFloat(document.getElementById('cfgAdrMax').value),
+    max_consecutive:parseInt(document.getElementById('cfgMaxConsecutive').value),
+    min_ema_gap_pct:parseFloat(document.getElementById('cfgMinEmaGapPct').value),
+    rev_min_ema_gap_pct:parseFloat(document.getElementById('cfgRevMinEmaGapPct').value),
+    rx_required:document.getElementById('cfgRxRequired').value==='true',
+    rx_max_age:parseInt(document.getElementById('cfgRxMaxAge').value),
+    rx_bonus_score:document.getElementById('cfgRxBonusScore').value==='true',
+    breakout_on:document.getElementById('cfgBreakoutOn').value==='true',
+    breakout_min_light:parseInt(document.getElementById('cfgBreakoutMinLight').value),
+    breakout_ema_gap_pct:parseFloat(document.getElementById('cfgBreakoutEmaGapPct').value),
+    breakout_max_rv:parseInt(document.getElementById('cfgBreakoutMaxRv').value),
+    breakout_max_adx:parseFloat(document.getElementById('cfgBreakoutMaxAdx').value),
+    breakout_max_adr:parseFloat(document.getElementById('cfgBreakoutMaxAdr').value),
+    breakout_min_rr:parseFloat(document.getElementById('cfgBreakoutMinRr').value),
+    breakout_req_rx:document.getElementById('cfgBreakoutReqRx').value==='true',
+    breakout_max_rx_age:parseInt(document.getElementById('cfgBreakoutMaxRxAge').value),
+    breakout_atr_exp:document.getElementById('cfgBreakoutAtrExp').value==='true',
+    breakout_price_ema:document.getElementById('cfgBreakoutPriceEma').value==='true',
+    breakout_min_body:parseFloat(document.getElementById('cfgBreakoutMinBody').value),
+    breakout_score_bonus:parseInt(document.getElementById('cfgBreakoutScoreBonus').value),
+    reversal_on:document.getElementById('cfgReversalOn').value==='true',
+    reversal_observe:document.getElementById('cfgReversalObserve').value==='true',
+    rev_lots:parseFloat(document.getElementById('cfgRevLots').value),
+    reversal_rv:parseInt(document.getElementById('cfgReversalRv').value),
+    reversal_rv_max:parseInt(document.getElementById('cfgReversalRvMax').value),
+    reversal_adr:parseFloat(document.getElementById('cfgReversalAdr').value),
+    rev_req_decel:document.getElementById('cfgRevReqDecel').value==='true',
+    rev_min_decel:parseInt(document.getElementById('cfgRevMinDecel').value),
+    rev_req_rx:document.getElementById('cfgRevReqRx').value==='true',
+    rev_rx_bonus:document.getElementById('cfgRevRxBonus').value==='true',
+    rev_req_diverg:document.getElementById('cfgRevReqDiverg').value==='true',
+    rev_diverg_bars:parseInt(document.getElementById('cfgRevDivergBars').value),
+    rev_req_hist_flip:document.getElementById('cfgRevReqHistFlip').value==='true',
+    rev_max_hist_age:parseInt(document.getElementById('cfgRevMaxHistAge').value),
+    session_filter_on:document.getElementById('cfgSessionFilterOn').value==='true',
+    session_start_utc:parseInt(document.getElementById('cfgSessionStartUtc').value),
+    session_end_utc:parseInt(document.getElementById('cfgSessionEndUtc').value),
+    time_offset:parseInt(document.getElementById('cfgTimeOffset').value),
+    no_night_trade:document.getElementById('cfgNoNightTrade').value==='true',
+    night_start_h:parseInt(document.getElementById('cfgNightStartH').value),
+    night_end_h:parseInt(document.getElementById('cfgNightEndH').value),
+    sunday_start_h:parseInt(document.getElementById('cfgSundayStartH').value),
+    fri_close_profit_h:parseInt(document.getElementById('cfgFriCloseProfitH').value),
+    fri_close_profit_m:parseInt(document.getElementById('cfgFriCloseProfitM').value),
+    fri_close_loss_h:parseInt(document.getElementById('cfgFriCloseLossH').value),
+    fri_close_loss_m:parseInt(document.getElementById('cfgFriCloseLossM').value),
+    fri_force_close_h:parseInt(document.getElementById('cfgFriForceCloseH').value),
+    fri_force_close_m:parseInt(document.getElementById('cfgFriForceCloseM').value),
+    data_mode:parseInt(document.getElementById('cfgDataMode').value),
+    csv_file:document.getElementById('cfgCsvFile').value,
+    csv_max_age_sec:parseInt(document.getElementById('cfgCsvMaxAgeSec').value),
+    radar_indicator:document.getElementById('cfgRadarIndicator').value,
+    export_csv:document.getElementById('cfgExportCsv').value==='true',
+    auto_fallback:document.getElementById('cfgAutoFallback').value==='true',
+    fallback_after:parseInt(document.getElementById('cfgFallbackAfter').value),
+    show_export_btn:document.getElementById('cfgShowExportBtn').value==='true',
+    auto_export:document.getElementById('cfgAutoExport').value==='true',
+    strategy_test:document.getElementById('cfgStrategyTest').value==='true',
+    ai_url:document.getElementById('cfgAiUrl').value,
+    ai_timeout:parseInt(document.getElementById('cfgAiTimeout').value),
+    ai_log:document.getElementById('cfgAiLog').value==='true',
+    test_trade:document.getElementById('cfgTestTrade').value==='true',
+    magic_number:parseInt(document.getElementById('cfgMagicNumber').value),
+    max_slippage:parseInt(document.getElementById('cfgMaxSlippage').value),
+    max_spread:parseInt(document.getElementById('cfgMaxSpread').value),
+    spread_dyn_mult:parseFloat(document.getElementById('cfgSpreadDynMult').value),
+    atr_mult:parseFloat(document.getElementById('cfgAtrMult').value),
+    atr_period:parseInt(document.getElementById('cfgAtrPeriod').value),
+    fractal_bars:parseInt(document.getElementById('cfgFractalBars').value),
+    dash_x:parseInt(document.getElementById('cfgDashX').value),
+    dash_y:parseInt(document.getElementById('cfgDashY').value),
+    dash_font_size:parseInt(document.getElementById('cfgDashFontSize').value),
+    dash_color:parseInt(document.getElementById('cfgDashColor').value),
+    dash_bg_color:parseInt(document.getElementById('cfgDashBgColor').value),
+    dash_bg:document.getElementById('cfgDashBg').value==='true',};
   fetch(API+'/ea_config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)}).then(r=>r.json()).then(d=>{
     const m=document.getElementById('cfgMsg');m.textContent=d.status==='ok'?'✅ '+d.message:'❌ '+(d.message||'errore');m.style.color=d.status==='ok'?'#81c784':'#ef5350';setTimeout(()=>{m.textContent=''},5000);
   }).catch(()=>{document.getElementById('cfgMsg').textContent='❌ Errore connessione'});
