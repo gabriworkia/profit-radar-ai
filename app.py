@@ -1887,6 +1887,40 @@ tr:hover{background:#1a1a35}
 .tooltip .tooltiptext{visibility:hidden;width:260px;background:#1a1a35;color:#e0e0e0;text-align:left;border-radius:8px;padding:10px;border:1px solid #4fc3f7;position:absolute;z-index:100;bottom:125%;left:50%;margin-left:-130px;opacity:0;transition:opacity .2s;font-size:.85em;line-height:1.4;text-transform:none;box-shadow:0 4px 12px rgba(0,0,0,.5)}
 .tooltip .tooltiptext::after{content:'';position:absolute;top:100%;left:50%;margin-left:-5px;border-width:5px;border-style:solid;border-color:#4fc3f7 transparent transparent transparent}
 .tooltip:hover .tooltiptext{visibility:visible;opacity:1}
+
+/* === SEZIONI COLLASSABILI (details/summary) === */
+details.section {
+  transition: all 0.3s ease;
+}
+details.section summary {
+  list-style: none;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+details.section summary::-webkit-details-marker {
+  display: none;
+}
+details.section summary h2 {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  margin-bottom: 0 !important;
+}
+details.section summary h2::after {
+  content: '▼';
+  font-size: 0.75em;
+  color: #4fc3f7;
+  transition: transform 0.2s ease;
+  margin-left: auto;
+}
+details[open].section summary h2::after {
+  transform: rotate(180deg);
+}
+details.section > :not(summary) {
+  margin-top: 14px;
+}
 </style>
 </head>
 <body>
@@ -1938,7 +1972,7 @@ tr:hover{background:#1a1a35}
   <div style="font-size:0.75em;color:#666;margin-top:4px" id="dStopDetail">-</div>
 </div></div>
 
-<div class="section"><h2>Configurazione principale</h2>
+<details class="section"><summary><h2>Configurazione principale</h2></summary>
 <div class="config-grid">
   <div class="cfg-item"><label>Stile (aggressività)<span class="tooltip"> ⓘ<span class="tooltiptext">Quanto il robot è esigente. 1=Conservativo, 2=Moderato, 3=Aggressivo, 4=Iperconservativo.</span></span></label>
     <input type="number" id="cfgAggressiveness" value="2" min="1" max="4" step="1"></div>
@@ -1958,8 +1992,8 @@ tr:hover{background:#1a1a35}
     <input type="number" id="cfgMaxConcurrent" value="10" min="1" max="28" step="1"></div>
   <div class="cfg-item"><label>Max trade per coppia<span class="tooltip"> ⓘ<span class="tooltiptext">Quanti trade può aprire sullo stesso cross contemporaneamente.</span></span></label>
     <input type="number" id="cfgMaxPerPair" value="1" min="1" max="5" step="1"></div>
-</div></div>
-<div class="section"><h2>Lotto, rischio e fasce</h2>
+</div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
+<details class="section"><summary><h2>Lotto, rischio e fasce</h2></summary>
 <div class="config-grid">
   <div class="cfg-item"><label>Lotto base<span class="tooltip"> ⓘ<span class="tooltiptext">Quanto compra o vende in un trade normale.</span></span></label>
     <input type="number" id="cfgFixedLots" value="0.01" min="0.01" max="1.0" step="0.01"></div>
@@ -1975,8 +2009,8 @@ tr:hover{background:#1a1a35}
     <input type="number" id="cfgFridayLots" value="0.01" min="0.0" max="1.0" step="0.01"></div>
   <div class="cfg-item"><label>🌇 Lotto Pomeriggio<span class="tooltip"> ⓘ<span class="tooltiptext">0.00 = pomeriggio chiuso (fuori dalla sessione principale). 0.01 = trade con lotto piccolo.</span></span></label>
     <input type="number" id="cfgAfternoonLots" value="0.01" min="0.0" max="1.0" step="0.01"></div>
-</div></div>
-<div class="section"><h2>Filtri giorno e direzione</h2>
+</div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
+<details class="section"><summary><h2>Filtri giorno e direzione</h2></summary>
 <div class="config-grid">
   <div class="cfg-item"><label>🚫 Filtro Lunedi<span class="tooltip"> ⓘ<span class="tooltiptext">ATTIVO = il lunedì il robot sta fermo, nessun trade. DISATTIVO = il lunedì trade normali. Esempio: se metti ATTIVO, lunedì nessun trade.</span></span></label>
     <select id="cfgNoMondayTrade"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
@@ -1988,8 +2022,8 @@ tr:hover{background:#1a1a35}
     <select id="cfgHyperOn"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
   <div class="cfg-item"><label>Whitelist ipercons.<span class="tooltip"> ⓘ<span class="tooltiptext">Simboli permessi quando la modalità iperconservativo è attiva. Separati da virgola.</span></span></label>
     <input type="text" id="cfgHyperSymbols" value="CHFJPY+,EURCAD+,NZDUSD+" placeholder="CHFJPY+,EURCAD+,NZDUSD+"></div>
-</div></div>
-<div class="section"><h2>TP, RR, Trailing e Break-Even</h2>
+</div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
+<details class="section"><summary><h2>TP, RR, Trailing e Break-Even</h2></summary>
 <div class="config-grid">
   <div class="cfg-item"><label>TP % ADR max<span class="tooltip"> ⓘ<span class="tooltiptext">Distanza massima del Take Profit. Più % = TP più lontano e rischioso.</span></span></label>
     <input type="number" id="cfgTpPercent" value="35" min="10" max="100" step="1"></div>
@@ -2013,8 +2047,8 @@ tr:hover{background:#1a1a35}
     <input type="number" id="cfgTrailAtrMult" value="0.5" min="0.1" max="3.0" step="0.1"></div>
   <div class="cfg-item"><label>Trail step pip<span class="tooltip"> ⓘ<span class="tooltiptext">Il robot muove lo stop solo se migliora di almeno questi pip. Evita troppi spostamenti.</span></span></label>
     <input type="number" id="cfgTrailStepPips" value="5" min="0" max="50" step="1"></div>
-</div></div>
-<div class="section"><h2>Filtri standard</h2>
+</div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
+<details class="section"><summary><h2>Filtri standard</h2></summary>
 <div class="config-grid">
   <div class="cfg-item"><label>RV massimo<span class="tooltip"> ⓘ<span class="tooltiptext">Quanto forte deve essere il segnale Radar. Più basso = scarta i segnali troppo deboli.</span></span></label>
     <input type="number" id="cfgRvMax" value="30" min="10" max="100" step="1"></div>
@@ -2026,8 +2060,8 @@ tr:hover{background:#1a1a35}
     <input type="number" id="cfgMinEmaGapPct" value="0.05" min="0.0" max="1.0" step="0.01"></div>
   <div class="cfg-item"><label>Min gap EMA % (Reversal)<span class="tooltip"> ⓘ<span class="tooltiptext">Distanza minima EMA per il modulo Reversal. Serve un trend definito da invertire.</span></span></label>
     <input type="number" id="cfgRevMinEmaGapPct" value="0.1" min="0.0" max="1.0" step="0.01"></div>
-</div></div>
-<div class="section"><h2>Filtro RX</h2>
+</div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
+<details class="section"><summary><h2>Filtro RX</h2></summary>
 <div class="config-grid">
   <div class="cfg-item"><label>RX richiesto<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, il robot entra solo se c&#39;è un segnale RX (nuovi massimi/minimi).</span></span></label>
     <select id="cfgRxRequired"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
@@ -2035,8 +2069,8 @@ tr:hover{background:#1a1a35}
     <input type="number" id="cfgRxMaxAge" value="4" min="1" max="10" step="1"></div>
   <div class="cfg-item"><label>RX bonus punteggio<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, il segnale RX aumenta il punteggio interno del trade.</span></span></label>
     <select id="cfgRxBonusScore"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
-</div></div>
-<div class="section"><h2>Modulo Breakout</h2>
+</div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
+<details class="section"><summary><h2>Modulo Breakout</h2></summary>
 <div class="config-grid">
   <div class="cfg-item"><label>Breakout attivo<span class="tooltip"> ⓘ<span class="tooltiptext">Modulo che cerca i movimenti che partono dopo il grigio.</span></span></label>
     <select id="cfgBreakoutOn"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
@@ -2064,8 +2098,8 @@ tr:hover{background:#1a1a35}
     <input type="number" id="cfgBreakoutMinBody" value="0.3" min="0.1" max="1.0" step="0.05"></div>
   <div class="cfg-item"><label>Breakout bonus punteggio<span class="tooltip"> ⓘ<span class="tooltiptext">Bonus punteggio interno del modulo Breakout (solitamente negativo = più selettivo).</span></span></label>
     <input type="number" id="cfgBreakoutScoreBonus" value="-80" min="-200" max="50" step="5"></div>
-</div></div>
-<div class="section"><h2>Modulo Reversal</h2>
+</div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
+<details class="section"><summary><h2>Modulo Reversal</h2></summary>
 <div class="config-grid">
   <div class="cfg-item"><label>Reversal attivo<span class="tooltip"> ⓘ<span class="tooltiptext">Modulo che cerca i ribaltamenti di trend estremo.</span></span></label>
     <select id="cfgReversalOn"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
@@ -2095,8 +2129,8 @@ tr:hover{background:#1a1a35}
     <select id="cfgRevReqHistFlip"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
   <div class="cfg-item"><label>Reversal eta max flip<span class="tooltip"> ⓘ<span class="tooltiptext">Quante candele fa può essere avvenuto il cambio colore.</span></span></label>
     <input type="number" id="cfgRevMaxHistAge" value="3" min="1" max="10" step="1"></div>
-</div></div>
-<div class="section"><h2>Orari e sessione</h2>
+</div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
+<details class="section"><summary><h2>Orari e sessione</h2></summary>
 <div class="config-grid">
   <div class="cfg-item"><label>Filtro sessione<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, il robot trade solo nella sessione principale (lotto normale). Fuori = pomeriggio.</span></span></label>
     <select id="cfgSessionFilterOn"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
@@ -2126,8 +2160,8 @@ tr:hover{background:#1a1a35}
     <input type="number" id="cfgFriForceCloseH" value="22" min="0" max="23" step="1"></div>
   <div class="cfg-item"><label>Ven chiusura forzata min<span class="tooltip"> ⓘ<span class="tooltiptext">Minuti dell&#39;ora di chiusura forzata del venerdì.</span></span></label>
     <input type="number" id="cfgFriForceCloseM" value="30" min="0" max="59" step="1"></div>
-</div></div>
-<div class="section"><h2>Dati, AI e log</h2>
+</div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
+<details class="section"><summary><h2>Dati, AI e log</h2></summary>
 <div class="config-grid">
   <div class="cfg-item"><label>Fonte dati<span class="tooltip"> ⓘ<span class="tooltiptext">0=CSV, 1=Auto, 2=CSV forzato. Lascia 1.</span></span></label>
     <input type="number" id="cfgDataMode" value="1" min="0" max="2" step="1"></div>
@@ -2157,8 +2191,8 @@ tr:hover{background:#1a1a35}
     <select id="cfgAiLog"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
   <div class="cfg-item"><label>Apri trade di test<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, all&#39;avvio apre un trade di test. Utile solo per debug.</span></span></label>
     <select id="cfgTestTrade"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
-</div></div>
-<div class="section"><h2>Tecnici e sicurezza</h2>
+</div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
+<details class="section"><summary><h2>Tecnici e sicurezza</h2></summary>
 <div class="config-grid">
   <div class="cfg-item"><label>Magic Number<span class="tooltip"> ⓘ<span class="tooltiptext">ID univoco dell&#39;EA. Non cambiarlo a meno che non sai perché.</span></span></label>
     <input type="number" id="cfgMagicNumber" value="270101" min="100000" max="999999" step="1"></div>
@@ -2174,8 +2208,8 @@ tr:hover{background:#1a1a35}
     <input type="number" id="cfgAtrPeriod" value="14" min="5" max="50" step="1"></div>
   <div class="cfg-item"><label>Candele fractal SL<span class="tooltip"> ⓘ<span class="tooltiptext">Quante candele indietro guardare per trovare il fractal per lo Stop Loss.</span></span></label>
     <input type="number" id="cfgFractalBars" value="50" min="10" max="200" step="10"></div>
-</div></div>
-<div class="section"><h2>Dashboard grafico MT4</h2>
+</div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
+<details class="section"><summary><h2>Dashboard grafico MT4</h2></summary>
 <div class="config-grid">
   <div class="cfg-item"><label>Dashboard X (pixel)<span class="tooltip"> ⓘ<span class="tooltiptext">Posizione orizzontale della dashboard sul grafico MT4.</span></span></label>
     <input type="number" id="cfgDashX" value="1300" min="0" max="3000" step="10"></div>
@@ -2189,9 +2223,8 @@ tr:hover{background:#1a1a35}
     <select id="cfgDashBgColor"><option value="16777215">Bianco</option><option value="0">Nero</option><option value="255">Rosso</option><option value="65280">Verde lime</option><option value="16711680">Blu</option><option value="65535">Giallo</option><option value="16776960">Ciano</option><option value="16711935">Magenta</option><option value="42495">Arancione</option><option value="9109504">Blu scuro</option><option value="3100495">Grigio ardesia</option></select></div>
   <div class="cfg-item"><label>Dashboard sfondo<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, mostra lo sfondo della dashboard su MT4.</span></span></label>
     <select id="cfgDashBg"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
-</div></div>
-<div class="btn-row"><button class="btn btn-blue" onclick="saveAllConfig()">💾 Salva Configurazione</button>
-  <span id="cfgMsg" style="color:#81c784;font-size:0.8em;align-self:center"></span></div>
+</div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
+
 
 <div class="section"><h2>Ultimi 20 Trade</h2>
 <div style="overflow-x:auto"><table>
@@ -2316,7 +2349,7 @@ function refresh(){
     document.getElementById('lastUpdate').style.color='#ef5350';
   });
 }
-function saveAllConfig(){
+function saveAllConfig(btn = null){
   const cfg={
     aggressiveness:parseInt(document.getElementById('cfgAggressiveness').value),
     use_ai:document.getElementById('cfgUseAi').value==='true',
@@ -2427,8 +2460,43 @@ function saveAllConfig(){
     dash_bg_color:parseInt(document.getElementById('cfgDashBgColor').value),
     dash_bg:document.getElementById('cfgDashBg').value==='true',};
   fetch(API+'/ea_config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)}).then(r=>r.json()).then(d=>{
-    const m=document.getElementById('cfgMsg');m.textContent=d.status==='ok'?'✅ '+d.message:'❌ '+(d.message||'errore');m.style.color=d.status==='ok'?'#81c784':'#ef5350';setTimeout(()=>{m.textContent=''},5000);
-  }).catch(()=>{document.getElementById('cfgMsg').textContent='❌ Errore connessione'});
+    const m_text = d.status==='ok'?'✅ '+d.message:'❌ '+(d.message||'errore');
+    const m_color = d.status==='ok'?'#81c784':'#ef5350';
+    if(btn) {
+      let m = btn.parentNode.querySelector('.cfg-msg');
+      if(!m) {
+        m = document.createElement('span');
+        m.className = 'cfg-msg';
+        m.style.fontSize = '0.85em';
+        m.style.marginLeft = '12px';
+        m.style.alignSelf = 'center';
+        btn.parentNode.appendChild(m);
+      }
+      m.textContent = m_text;
+      m.style.color = m_color;
+      setTimeout(()=>{m.textContent=''},5000);
+    }
+    const g=document.getElementById('cfgMsg');
+    if(g){g.textContent=m_text;g.style.color=m_color;setTimeout(()=>{g.textContent=''},5000);}
+  }).catch(()=>{
+    const err_text = '❌ Errore connessione';
+    if(btn) {
+      let m = btn.parentNode.querySelector('.cfg-msg');
+      if(!m) {
+        m = document.createElement('span');
+        m.className = 'cfg-msg';
+        m.style.fontSize = '0.85em';
+        m.style.marginLeft = '12px';
+        m.style.alignSelf = 'center';
+        btn.parentNode.appendChild(m);
+      }
+      m.textContent = err_text;
+      m.style.color = '#ef5350';
+      setTimeout(()=>{m.textContent=''},5000);
+    }
+    const g=document.getElementById('cfgMsg');
+    if(g){g.textContent=err_text;g.style.color='#ef5350';setTimeout(()=>{g.textContent=''},5000);}
+  });
 }
 function retrain(){
   document.getElementById('actionMsg').textContent='⏳ Riaddestramento...';
