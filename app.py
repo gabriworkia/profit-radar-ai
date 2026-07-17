@@ -1286,6 +1286,7 @@ DEFAULT_EA_CONFIG = {
     "breakout_score_bonus" : -80,
     # --- Modulo Reversal ---
     "reversal_on" : False,
+    "dynamic_reversal_on" : True,
     "reversal_observe" : False,
     "rev_lots" : 0.01,
     "reversal_rv" : 65,
@@ -1425,7 +1426,7 @@ def update_ea_config():
     "breakout_min_light", "breakout_ema_gap_pct", "breakout_max_rv", 
     "breakout_max_adx", "breakout_max_adr", "breakout_min_rr", "breakout_req_rx", 
     "breakout_max_rx_age", "breakout_atr_exp", "breakout_price_ema", 
-    "breakout_min_body", "breakout_score_bonus", "reversal_on", "reversal_observe", 
+    "breakout_min_body", "breakout_score_bonus", "reversal_on", "dynamic_reversal_on", "reversal_observe", 
     "rev_lots", "reversal_rv", "reversal_rv_max", "reversal_adr", "rev_req_decel", 
     "rev_min_decel", "rev_req_rx", "rev_rx_bonus", "rev_req_diverg", 
     "rev_diverg_bars", "rev_req_hist_flip", "rev_max_hist_age", "session_filter_on", 
@@ -1443,7 +1444,7 @@ def update_ea_config():
             if key in data:
                 old_val = cfg.get(key)
                 new_val = data[key]
-                bool_keys = {"use_ai", "send_feedback", "daily_stop_on", "dynamic_lots_on", "no_monday_trade", "no_buy", "hyper_on", "tp_adaptive", "trailing_on", "rx_required", "rx_bonus_score", "breakout_on", "breakout_req_rx", "breakout_atr_exp", "breakout_price_ema", "reversal_on", "reversal_observe", "rev_req_decel", "rev_req_rx", "rev_rx_bonus", "rev_req_diverg", "rev_req_hist_flip", "session_filter_on", "no_night_trade", "export_csv", "auto_fallback", "show_export_btn", "auto_export", "strategy_test", "ai_log", "test_trade", "dash_bg"}
+                bool_keys = {"use_ai", "send_feedback", "daily_stop_on", "dynamic_lots_on", "no_monday_trade", "no_buy", "hyper_on", "tp_adaptive", "trailing_on", "rx_required", "rx_bonus_score", "breakout_on", "breakout_req_rx", "breakout_atr_exp", "breakout_price_ema", "reversal_on", "dynamic_reversal_on", "reversal_observe", "rev_req_decel", "rev_req_rx", "rev_rx_bonus", "rev_req_diverg", "rev_req_hist_flip", "session_filter_on", "no_night_trade", "export_csv", "auto_fallback", "show_export_btn", "auto_export", "strategy_test", "ai_log", "test_trade", "dash_bg"}
 
                 int_keys = {"aggressiveness", "ai_min_conf", "max_consec_loss", "max_concurrent", "max_per_pair", "dynamic_lookback", "tp_percent", "tp_percent_min", "max_tp_pips", "be_pips", "be_profit", "trail_step_pips", "rv_max", "max_consecutive", "rx_max_age", "breakout_min_light", "breakout_max_rv", "breakout_max_rx_age", "breakout_score_bonus", "reversal_rv", "reversal_rv_max", "rev_min_decel", "rev_diverg_bars", "rev_max_hist_age", "session_start_utc", "session_end_utc", "time_offset", "night_start_h", "night_end_h", "sunday_start_h", "fri_close_profit_h", "fri_close_profit_m", "fri_close_loss_h", "fri_close_loss_m", "fri_force_close_h", "fri_force_close_m", "data_mode", "csv_max_age_sec", "fallback_after", "ai_timeout", "magic_number", "max_slippage", "max_spread", "atr_period", "fractal_bars", "dash_x", "dash_y", "dash_font_size", "dash_color", "dash_bg_color"}
 
@@ -2137,6 +2138,8 @@ details.section > :not(summary) {
 </div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
 <details class="section"><summary><h2>Modulo Reversal</h2></summary>
 <div class="config-grid">
+  <div class="cfg-item"><label>Reversal dinamico (Picchi)<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, l'EA calcola la media dei 4 picchi storici maggiori per ciascun cross invece di usare il valore fisso.</span></span></label>
+    <select id="cfgDynamicReversalOn"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
   <div class="cfg-item"><label>Reversal attivo<span class="tooltip"> ⓘ<span class="tooltiptext">Modulo che cerca i ribaltamenti di trend estremo.</span></span></label>
     <select id="cfgReversalOn"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
   <div class="cfg-item"><label>Reversal solo osservazione<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, il Reversal logga i segnali ma NON apre trade.</span></span></label>
@@ -2422,6 +2425,7 @@ function refresh(){
     document.getElementById('cfgHyperOn').value=cfg.hyper_on?'true':'false';
     document.getElementById('cfgBreakoutOn').value=cfg.breakout_on?'true':'false';
     document.getElementById('cfgReversalOn').value=cfg.reversal_on?'true':'false';
+    document.getElementById('cfgDynamicReversalOn').value=cfg.dynamic_reversal_on?'true':'false';
     document.getElementById('cfgMaxConcurrent').value=cfg.max_concurrent||10;
     const tb=document.getElementById('tradeTable');
     if(d.trade_history&&d.trade_history.length>0){
@@ -2492,6 +2496,7 @@ function saveAllConfig(btn = null){
     breakout_min_body:parseFloat(document.getElementById('cfgBreakoutMinBody').value),
     breakout_score_bonus:parseInt(document.getElementById('cfgBreakoutScoreBonus').value),
     reversal_on:document.getElementById('cfgReversalOn').value==='true',
+    dynamic_reversal_on:document.getElementById('cfgDynamicReversalOn').value==='true',
     reversal_observe:document.getElementById('cfgReversalObserve').value==='true',
     rev_lots:parseFloat(document.getElementById('cfgRevLots').value),
     reversal_rv:parseInt(document.getElementById('cfgReversalRv').value),
