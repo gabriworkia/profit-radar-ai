@@ -2355,15 +2355,19 @@ function refresh(){
       
       if (sortedSymbols.length > 0) {
         statsTable.innerHTML = sortedSymbols.map(sym => {
-          const s = stats[sym] || { count: 0, win_rate: 0, avg_rv: 0, max_rv: 0 };
+          const s = stats[sym] || {};
+          const s_count = s.count || 0;
+          const s_win_rate = s.win_rate != null ? s.win_rate : 0;
+          const s_avg_rv = s.avg_rv != null ? s.avg_rv : 0;
+          const s_max_rv = s.max_rv != null ? s.max_rv : 0;
           const p = peaks[sym] != null ? peaks[sym] : '-';
-          let wrColor = s.win_rate >= 50 ? '#81c784' : s.count > 0 ? '#ef5350' : '#888';
+          let wrColor = s_win_rate >= 50 ? '#81c784' : s_count > 0 ? '#ef5350' : '#888';
           return '<tr>' +
             '<td><strong>' + sym + '</strong></td>' +
-            '<td>' + s.count + '</td>' +
-            '<td style="color:' + wrColor + '">' + (s.count > 0 ? s.win_rate.toFixed(1) + '%' : '-') + '</td>' +
-            '<td>' + (s.count > 0 ? s.avg_rv.toFixed(1) : '-') + '</td>' +
-            '<td>' + (s.count > 0 ? s.max_rv.toFixed(1) : '-') + '</td>' +
+            '<td>' + s_count + '</td>' +
+            '<td style="color:' + wrColor + '">' + (s_count > 0 ? s_win_rate.toFixed(1) + '%' : '-') + '</td>' +
+            '<td>' + (s_count > 0 ? s_avg_rv.toFixed(1) : '-') + '</td>' +
+            '<td>' + (s_count > 0 ? s_max_rv.toFixed(1) : '-') + '</td>' +
             '<td style="color:#4fc3f7"><strong>' + p + '</strong></td>' +
             '</tr>';
         }).join('');
