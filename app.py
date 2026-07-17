@@ -1356,6 +1356,7 @@ ea_status = {
     "warmup_ok": False, "warmup_last": None,
     "data_source": "", "cross_active": 0, "cross_total": 0,
     "daily_stopped": False, "daily_stop_on": True, "account_currency": "EUR", "ea_version": "",
+    "peaks": {},
 }
 
 
@@ -1499,6 +1500,40 @@ def sanitize_for_json(obj):
     return obj
 
 
+def get_trade_stats():
+    stats = {}
+    path = FEEDBACK_PATH if os.path.exists(FEEDBACK_PATH) else os.path.join(DATA_DIR, "PRP_TradeLog.csv")
+    if os.path.exists(path):
+        try:
+            sep = ";" if path.endswith("PRP_TradeLog.csv") else ","
+            df = pd.read_csv(path, sep=sep, on_bad_lines="skip")
+            df.columns = [c.lower() for c in df.columns]
+            if "symbol" in df.columns and "rv" in df.columns:
+                df["symbol_clean"] = df["symbol"].str.upper().str.strip()
+                df["rv"] = pd.to_numeric(df["rv"], errors="coerce").fillna(0)
+                df["rv_abs"] = df["rv"].abs()
+                
+                for sym, group in df.groupby("symbol_clean"):
+                    count = len(group)
+                    avg_rv = float(group["rv_abs"].mean())
+                    max_rv = float(group["rv_abs"].max())
+                    
+                    win_rate = 0.0
+                    if "won" in group.columns:
+                        won_col = group["won"].astype(str).str.lower().str.strip()
+                        win_rate = float((won_col == "true").mean() * 100)
+                    
+                    stats[sym] = {
+                        "count": count,
+                        "avg_rv": round(avg_rv, 1),
+                        "max_rv": round(max_rv, 1),
+                        "win_rate": round(win_rate, 1)
+                    }
+        except Exception as e:
+            print("[STATS ERROR]", str(e))
+    return stats
+
+
 @app.route("/dashboard_data", methods=["GET"])
 def dashboard_data():
     ea = dict(ea_status)
@@ -1525,6 +1560,7 @@ def dashboard_data():
         "ea": ea, "server": srv, "config": load_ea_config(),
         "feedback_count": fb_count, "trade_history": trade_history,
         "ready_to_train": fb_count >= MIN_FEEDBACK_FOR_TRAIN,
+        "trade_stats": get_trade_stats(),
     }
     # Doppia sicurezza: pulisci tutto da NaN/Inf
     result = sanitize_for_json(result)
@@ -2226,6 +2262,30 @@ details.section > :not(summary) {
 </div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
 
 
+<details class="section" open>
+  <summary><h2>📊 Analisi Picchi e Statistiche Cross</h2></summary>
+  <div style="font-size: 0.8em; color: #aaa; margin-bottom: 12px; line-height: 1.4;">
+    Questa finestra interattiva mostra l'analisi statistica dei picchi di tendenza (Radar Value) e del Win Rate registrato storicamente per ciascuno dei 28 cross forex. Puoi confrontare il picco dinamico calcolato dall'EA con le statistiche reali dei trade passati per regolare al meglio la sensibilità.
+  </div>
+  <div style="overflow-y:auto; max-height: 300px; border: 1px solid #1e1e40; border-radius: 6px;">
+    <table>
+      <thead>
+        <tr>
+          <th>Simbolo</th>
+          <th>Trade Totali</th>
+          <th>Win Rate</th>
+          <th>Avg RV (Entrata)</th>
+          <th>Max RV (Entrata)</th>
+          <th>Picco Dinamico (EA)</th>
+        </tr>
+      </thead>
+      <tbody id="statsTable">
+        <tr><td colspan="6" style="text-align:center;color:#666;padding:12px;">In attesa dei dati dall'EA...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</details>
+
 <div class="section"><h2>Ultimi 20 Trade</h2>
 <div style="overflow-x:auto"><table>
 <thead><tr><th>Simbolo</th><th>Dir</th><th>Modulo</th><th>Pips</th><th>Profitto</th><th>Risultato</th><th>AI Conf</th></tr></thead>
@@ -2281,6 +2341,33 @@ function refresh(){
     document.getElementById('crossTotal').textContent=ea.cross_total||0;
     document.getElementById('crossActive').textContent=ea.cross_active||0;
     document.getElementById('dailyWL').textContent=(ea.daily_wins||0)+' / '+(ea.daily_losses||0);
+
+    // --- Popola Tabella Statistiche e Picchi Dinamici ---
+    const statsTable = document.getElementById('statsTable');
+    if (statsTable) {
+      const stats = d.trade_stats || {};
+      const peaks = (d.ea && d.ea.peaks) ? d.ea.peaks : {};
+      const allSymbols = new Set([...Object.keys(stats), ...Object.keys(peaks)]);
+      const sortedSymbols = Array.from(allSymbols).sort();
+      
+      if (sortedSymbols.length > 0) {
+        statsTable.innerHTML = sortedSymbols.map(sym => {
+          const s = stats[sym] || { count: 0, win_rate: 0, avg_rv: 0, max_rv: 0 };
+          const p = peaks[sym] != null ? peaks[sym] : '-';
+          let wrColor = s.win_rate >= 50 ? '#81c784' : s.count > 0 ? '#ef5350' : '#888';
+          return '<tr>' +
+            '<td><strong>' + sym + '</strong></td>' +
+            '<td>' + s.count + '</td>' +
+            '<td style="color:' + wrColor + '">' + (s.count > 0 ? s.win_rate.toFixed(1) + '%' : '-') + '</td>' +
+            '<td>' + (s.count > 0 ? s.avg_rv.toFixed(1) : '-') + '</td>' +
+            '<td>' + (s.count > 0 ? s.max_rv.toFixed(1) : '-') + '</td>' +
+            '<td style="color:#4fc3f7"><strong>' + p + '</strong></td>' +
+            '</tr>';
+        }).join('');
+      } else {
+        statsTable.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#666;padding:12px;">In attesa del primo sync dell\'EA...</td></tr>';
+      }
+    }
 
     // --- Daily Stop W/L pesato ---
     const lw=cfg.loss_weight||1.5;
