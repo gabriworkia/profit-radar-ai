@@ -2009,7 +2009,7 @@ details.section > :not(summary) {
   <div style="font-size:0.75em;color:#666;margin-top:4px" id="dStopDetail">-</div>
 </div></div>
 
-<details class="section"><summary><h2>Configurazione principale</h2></summary>
+<details class="section" open><summary><h2>Configurazione principale</h2></summary>
 <div class="config-grid">
   <div class="cfg-item"><label>Stile (aggressività)<span class="tooltip"> ⓘ<span class="tooltiptext">Quanto il robot è esigente. 1=Conservativo, 2=Moderato, 3=Aggressivo, 4=Iperconservativo.</span></span></label>
     <input type="number" id="cfgAggressiveness" value="2" min="1" max="4" step="1"></div>
@@ -2030,7 +2030,7 @@ details.section > :not(summary) {
   <div class="cfg-item"><label>Max trade per coppia<span class="tooltip"> ⓘ<span class="tooltiptext">Quanti trade può aprire sullo stesso cross contemporaneamente.</span></span></label>
     <input type="number" id="cfgMaxPerPair" value="1" min="1" max="5" step="1"></div>
 </div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
-<details class="section"><summary><h2>Lotto, rischio e fasce</h2></summary>
+<details class="section" open><summary><h2>Lotto, rischio e fasce</h2></summary>
 <div class="config-grid">
   <div class="cfg-item"><label>Lotto base<span class="tooltip"> ⓘ<span class="tooltiptext">Quanto compra o vende in un trade normale.</span></span></label>
     <input type="number" id="cfgFixedLots" value="0.01" min="0.01" max="1.0" step="0.01"></div>
@@ -2047,7 +2047,7 @@ details.section > :not(summary) {
   <div class="cfg-item"><label>🌇 Lotto Pomeriggio<span class="tooltip"> ⓘ<span class="tooltiptext">0.00 = pomeriggio chiuso (fuori dalla sessione principale). 0.01 = trade con lotto piccolo.</span></span></label>
     <input type="number" id="cfgAfternoonLots" value="0.01" min="0.0" max="1.0" step="0.01"></div>
 </div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
-<details class="section"><summary><h2>Filtri giorno e direzione</h2></summary>
+<details class="section" open><summary><h2>Filtri giorno e direzione</h2></summary>
 <div class="config-grid">
   <div class="cfg-item"><label>🚫 Filtro Lunedi<span class="tooltip"> ⓘ<span class="tooltiptext">ATTIVO = il lunedì il robot sta fermo, nessun trade. DISATTIVO = il lunedì trade normali. Esempio: se metti ATTIVO, lunedì nessun trade.</span></span></label>
     <select id="cfgNoMondayTrade"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
@@ -2060,7 +2060,7 @@ details.section > :not(summary) {
   <div class="cfg-item"><label>Whitelist ipercons.<span class="tooltip"> ⓘ<span class="tooltiptext">Simboli permessi quando la modalità iperconservativo è attiva. Separati da virgola.</span></span></label>
     <input type="text" id="cfgHyperSymbols" value="CHFJPY+,EURCAD+,NZDUSD+" placeholder="CHFJPY+,EURCAD+,NZDUSD+"></div>
 </div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
-<details class="section"><summary><h2>TP, RR, Trailing e Break-Even</h2></summary>
+<details class="section" open><summary><h2>TP, RR, Trailing e Break-Even</h2></summary>
 <div class="config-grid">
   <div class="cfg-item"><label>TP % ADR max<span class="tooltip"> ⓘ<span class="tooltiptext">Distanza massima del Take Profit. Più % = TP più lontano e rischioso.</span></span></label>
     <input type="number" id="cfgTpPercent" value="35" min="10" max="100" step="1"></div>
@@ -2085,7 +2085,7 @@ details.section > :not(summary) {
   <div class="cfg-item"><label>Trail step pip<span class="tooltip"> ⓘ<span class="tooltiptext">Il robot muove lo stop solo se migliora di almeno questi pip. Evita troppi spostamenti.</span></span></label>
     <input type="number" id="cfgTrailStepPips" value="5" min="0" max="50" step="1"></div>
 </div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
-<details class="section"><summary><h2>Filtri standard</h2></summary>
+<details class="section" open><summary><h2>Filtri standard</h2></summary>
 <div class="config-grid">
   <div class="cfg-item"><label>RV massimo<span class="tooltip"> ⓘ<span class="tooltiptext">Quanto forte deve essere il segnale Radar. Più basso = scarta i segnali troppo deboli.</span></span></label>
     <input type="number" id="cfgRvMax" value="30" min="10" max="100" step="1"></div>
@@ -2098,7 +2098,7 @@ details.section > :not(summary) {
   <div class="cfg-item"><label>Min gap EMA % (Reversal)<span class="tooltip"> ⓘ<span class="tooltiptext">Distanza minima EMA per il modulo Reversal. Serve un trend definito da invertire.</span></span></label>
     <input type="number" id="cfgRevMinEmaGapPct" value="0.1" min="0.0" max="1.0" step="0.01"></div>
 </div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
-<details class="section"><summary><h2>Filtro RX</h2></summary>
+<details class="section" open><summary><h2>Filtro RX</h2></summary>
 <div class="config-grid">
   <div class="cfg-item"><label>RX richiesto<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, il robot entra solo se c&#39;è un segnale RX (nuovi massimi/minimi).</span></span></label>
     <select id="cfgRxRequired"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
@@ -2107,7 +2107,7 @@ details.section > :not(summary) {
   <div class="cfg-item"><label>RX bonus punteggio<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, il segnale RX aumenta il punteggio interno del trade.</span></span></label>
     <select id="cfgRxBonusScore"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
 </div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
-<details class="section"><summary><h2>Modulo Breakout</h2></summary>
+<details class="section" open><summary><h2>Modulo Breakout</h2></summary>
 <div class="config-grid">
   <div class="cfg-item"><label>Breakout attivo<span class="tooltip"> ⓘ<span class="tooltiptext">Modulo che cerca i movimenti che partono dopo il grigio.</span></span></label>
     <select id="cfgBreakoutOn"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
@@ -2136,7 +2136,7 @@ details.section > :not(summary) {
   <div class="cfg-item"><label>Breakout bonus punteggio<span class="tooltip"> ⓘ<span class="tooltiptext">Bonus punteggio interno del modulo Breakout (solitamente negativo = più selettivo).</span></span></label>
     <input type="number" id="cfgBreakoutScoreBonus" value="-80" min="-200" max="50" step="5"></div>
 </div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
-<details class="section"><summary><h2>Modulo Reversal</h2></summary>
+<details class="section" open><summary><h2>Modulo Reversal</h2></summary>
 <div class="config-grid">
   <div class="cfg-item"><label>Reversal dinamico (Picchi)<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, l'EA calcola la media dei 4 picchi storici maggiori per ciascun cross invece di usare il valore fisso.</span></span></label>
     <select id="cfgDynamicReversalOn"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
@@ -2169,7 +2169,7 @@ details.section > :not(summary) {
   <div class="cfg-item"><label>Reversal eta max flip<span class="tooltip"> ⓘ<span class="tooltiptext">Quante candele fa può essere avvenuto il cambio colore.</span></span></label>
     <input type="number" id="cfgRevMaxHistAge" value="3" min="1" max="10" step="1"></div>
 </div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
-<details class="section"><summary><h2>Orari e sessione</h2></summary>
+<details class="section" open><summary><h2>Orari e sessione</h2></summary>
 <div class="config-grid">
   <div class="cfg-item"><label>Filtro sessione<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, il robot trade solo nella sessione principale (lotto normale). Fuori = pomeriggio.</span></span></label>
     <select id="cfgSessionFilterOn"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
@@ -2200,7 +2200,7 @@ details.section > :not(summary) {
   <div class="cfg-item"><label>Ven chiusura forzata min<span class="tooltip"> ⓘ<span class="tooltiptext">Minuti dell&#39;ora di chiusura forzata del venerdì.</span></span></label>
     <input type="number" id="cfgFriForceCloseM" value="30" min="0" max="59" step="1"></div>
 </div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
-<details class="section"><summary><h2>Dati, AI e log</h2></summary>
+<details class="section" open><summary><h2>Dati, AI e log</h2></summary>
 <div class="config-grid">
   <div class="cfg-item"><label>Fonte dati<span class="tooltip"> ⓘ<span class="tooltiptext">0=CSV, 1=Auto, 2=CSV forzato. Lascia 1.</span></span></label>
     <input type="number" id="cfgDataMode" value="1" min="0" max="2" step="1"></div>
@@ -2231,7 +2231,7 @@ details.section > :not(summary) {
   <div class="cfg-item"><label>Apri trade di test<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, all&#39;avvio apre un trade di test. Utile solo per debug.</span></span></label>
     <select id="cfgTestTrade"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
 </div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
-<details class="section"><summary><h2>Tecnici e sicurezza</h2></summary>
+<details class="section" open><summary><h2>Tecnici e sicurezza</h2></summary>
 <div class="config-grid">
   <div class="cfg-item"><label>Magic Number<span class="tooltip"> ⓘ<span class="tooltiptext">ID univoco dell&#39;EA. Non cambiarlo a meno che non sai perché.</span></span></label>
     <input type="number" id="cfgMagicNumber" value="270101" min="100000" max="999999" step="1"></div>
@@ -2248,7 +2248,7 @@ details.section > :not(summary) {
   <div class="cfg-item"><label>Candele fractal SL<span class="tooltip"> ⓘ<span class="tooltiptext">Quante candele indietro guardare per trovare il fractal per lo Stop Loss.</span></span></label>
     <input type="number" id="cfgFractalBars" value="50" min="10" max="200" step="10"></div>
 </div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
-<details class="section"><summary><h2>Dashboard grafico MT4</h2></summary>
+<details class="section" open><summary><h2>Dashboard grafico MT4</h2></summary>
 <div class="config-grid">
   <div class="cfg-item"><label>Dashboard X (pixel)<span class="tooltip"> ⓘ<span class="tooltiptext">Posizione orizzontale della dashboard sul grafico MT4.</span></span></label>
     <input type="number" id="cfgDashX" value="1300" min="0" max="3000" step="10"></div>
