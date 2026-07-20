@@ -2372,7 +2372,7 @@ function refresh(){
             '</tr>';
         }).join('');
       } else {
-        statsTable.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#666;padding:12px;">In attesa del primo sync dell\'EA...</td></tr>';
+        statsTable.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#666;padding:12px;">In attesa del primo sync dell&apos;EA...</td></tr>';
       }
     }
 
