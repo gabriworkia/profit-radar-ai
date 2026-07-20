@@ -2350,25 +2350,41 @@ function refresh(){
     if (statsTable) {
       const stats = d.trade_stats || {};
       const peaks = (d.ea && d.ea.peaks) ? d.ea.peaks : {};
-      const allSymbols = new Set([...Object.keys(stats), ...Object.keys(peaks)]);
-      const sortedSymbols = Array.from(allSymbols).sort();
+      const unified = {};
+      
+      Object.keys(stats).forEach(rawSym => {
+        const clean = rawSym.replace('+', '').toUpperCase().trim();
+        if (!unified[clean]) {
+          unified[clean] = { count: 0, win_rate: 0, avg_rv: 0, max_rv: 0, peak: '-' };
+        }
+        const s = stats[rawSym];
+        unified[clean].count = s.count || 0;
+        unified[clean].win_rate = s.win_rate != null ? s.win_rate : 0;
+        unified[clean].avg_rv = s.avg_rv != null ? s.avg_rv : 0;
+        unified[clean].max_rv = s.max_rv != null ? s.max_rv : 0;
+      });
+      
+      Object.keys(peaks).forEach(rawSym => {
+        const clean = rawSym.replace('+', '').toUpperCase().trim();
+        if (!unified[clean]) {
+          unified[clean] = { count: 0, win_rate: 0, avg_rv: 0, max_rv: 0, peak: '-' };
+        }
+        unified[clean].peak = peaks[rawSym] != null ? peaks[rawSym] : '-';
+      });
+      
+      const sortedSymbols = Object.keys(unified).sort();
       
       if (sortedSymbols.length > 0) {
         statsTable.innerHTML = sortedSymbols.map(sym => {
-          const s = stats[sym] || {};
-          const s_count = s.count || 0;
-          const s_win_rate = s.win_rate != null ? s.win_rate : 0;
-          const s_avg_rv = s.avg_rv != null ? s.avg_rv : 0;
-          const s_max_rv = s.max_rv != null ? s.max_rv : 0;
-          const p = peaks[sym] != null ? peaks[sym] : '-';
-          let wrColor = s_win_rate >= 50 ? '#81c784' : s_count > 0 ? '#ef5350' : '#888';
+          const u = unified[sym];
+          let wrColor = u.win_rate >= 50 ? '#81c784' : u.count > 0 ? '#ef5350' : '#888';
           return '<tr>' +
             '<td><strong>' + sym + '</strong></td>' +
-            '<td>' + s_count + '</td>' +
-            '<td style="color:' + wrColor + '">' + (s_count > 0 ? s_win_rate.toFixed(1) + '%' : '-') + '</td>' +
-            '<td>' + (s_count > 0 ? s_avg_rv.toFixed(1) : '-') + '</td>' +
-            '<td>' + (s_count > 0 ? s_max_rv.toFixed(1) : '-') + '</td>' +
-            '<td style="color:#4fc3f7"><strong>' + p + '</strong></td>' +
+            '<td>' + u.count + '</td>' +
+            '<td style="color:' + wrColor + '">' + (u.count > 0 ? u.win_rate.toFixed(1) + '%' : '-') + '</td>' +
+            '<td>' + (u.count > 0 ? u.avg_rv.toFixed(1) : '-') + '</td>' +
+            '<td>' + (u.count > 0 ? u.max_rv.toFixed(1) : '-') + '</td>' +
+            '<td style="color:#4fc3f7"><strong>' + u.peak + '</strong></td>' +
             '</tr>';
         }).join('');
       } else {
