@@ -515,14 +515,40 @@ def load_model():
 def train_model():
     global model, stats, TRAIN_FEATURES
 
-    if not os.path.exists(FEEDBACK_PATH):
-        return {"error": "Nessun dato feedback disponibile"}
+    # Se feedback.csv non esiste o è troppo piccolo, cerchiamo PRP_TradeLog.csv
+    path = FEEDBACK_PATH
+    fallback_log_path = os.path.join(DATA_DIR, "PRP_TradeLog.csv")
+    use_fallback_csv = False
+
+    if not os.path.exists(path):
+        if os.path.exists(fallback_log_path):
+            path = fallback_log_path
+            use_fallback_csv = True
+        else:
+            return {"error": "Nessun dato feedback o log trade disponibile per l'addestramento"}
+    else:
+        try:
+            temp_df = pd.read_csv(path)
+            if len(temp_df) < MIN_FEEDBACK_FOR_TRAIN and os.path.exists(fallback_log_path):
+                path = fallback_log_path
+                use_fallback_csv = True
+        except:
+            if os.path.exists(fallback_log_path):
+                path = fallback_log_path
+                use_fallback_csv = True
 
     try:
         import joblib
         import lightgbm as lgb
 
-        fb_df = pd.read_csv(FEEDBACK_PATH)
+        if use_fallback_csv:
+            fb_df = pd.read_csv(path, sep=";", on_bad_lines="skip")
+            fb_df.columns = [c.lower() for c in fb_df.columns]
+            if "adr%" in fb_df.columns:
+                fb_df["adr_pct"] = fb_df["adr%"]
+        else:
+            fb_df = pd.read_csv(path)
+
         if len(fb_df) < MIN_FEEDBACK_FOR_TRAIN:
             return {"error": f"Servono almeno {MIN_FEEDBACK_FOR_TRAIN} feedback, attuali: {len(fb_df)}"}
 
@@ -584,7 +610,11 @@ def train_model():
                 if df[feat].nunique() > 1:
                     feature_cols.append(feat)
 
-        df["won"] = df["won"].astype(bool)
+        # Convert "won" correctly to boolean (handles string "true"/"false" and raw booleans)
+        if df["won"].dtype == object:
+            df["won"] = df["won"].astype(str).str.lower().str.strip() == "true"
+        else:
+            df["won"] = df["won"].astype(bool)
         print(f"[TRAIN] Feature usate ({len(feature_cols)}): {feature_cols}")
         # Usa TUTTI i trade, anche quelli con features=0
         # Il modello impara che "no features = meno info = più cautela"
@@ -1226,52 +1256,52 @@ def train_from_github():
 DEFAULT_EA_CONFIG = {
     # --- Configurazione principale ---
     "aggressiveness" : 1,
-    "use_ai" : False,
-    "ai_min_conf" : 70,
+    "use_ai" : True,
+    "ai_min_conf" : 75,
     "send_feedback" : True,
-    "daily_stop_on" : False,
+    "daily_stop_on" : True,
     "max_consec_loss" : 2,
     "loss_weight" : 1.5,
-    "max_concurrent" : 10,
+    "max_concurrent" : 3,
     "max_per_pair" : 1,
     # --- Lotto, rischio e fasce ---
-    "fixed_lots" : 0.05,
-    "max_lots_cap" : 0.05,
-    "max_lots_safety" : 0.05,
+    "fixed_lots" : 0.07,
+    "max_lots_cap" : 0.14,
+    "max_lots_safety" : 0.15,
     "dynamic_lots_on" : False,
     "dynamic_lookback" : 20,
-    "friday_lots" : 0.01,
-    "afternoon_lots" : 0.01,
+    "friday_lots" : 0.00,
+    "afternoon_lots" : 0.00,
     # --- Filtri giorno e direzione ---
-    "no_monday_trade" : False,
+    "no_monday_trade" : True,
     "no_buy" : False,
-    "symbol_blacklist" : '',
-    "hyper_on" : False,
-    "hyper_symbols" : 'CHFJPY+,EURCAD+,NZDUSD+',
+    "symbol_blacklist" : 'EURAUD,GBPAUD,USDJPY,AUDJPY,AUDUSD',
+    "hyper_on" : True,
+    "hyper_symbols" : 'EURCAD,EURUSD,GBPJPY,EURJPY,NZDJPY,CHFJPY,EURNZD,USDCAD',
     # --- TP, RR, Trailing e Break-Even ---
-    "tp_percent" : 35,
-    "tp_percent_min" : 20,
+    "tp_percent" : 80,
+    "tp_percent_min" : 50,
     "tp_adaptive" : True,
     "max_tp_pips" : 0,
-    "min_rr" : 1.0,
+    "min_rr" : 1.5,
     "be_pips" : 15,
-    "be_profit" : 5,
+    "be_profit" : 0,
     "trailing_on" : True,
-    "trail_activate" : 1.5,
-    "trail_atr_mult" : 0.5,
+    "trail_activate" : 1.0,
+    "trail_atr_mult" : 1.5,
     "trail_step_pips" : 5,
     # --- Filtri standard ---
-    "rv_max" : 30,
+    "rv_max" : 20,
     "adr_max" : 50.0,
-    "max_consecutive" : 15,
-    "min_ema_gap_pct" : 0.05,
-    "rev_min_ema_gap_pct" : 0.1,
+    "max_consecutive" : 10,
+    "min_ema_gap_pct" : 0.1,
+    "rev_min_ema_gap_pct" : 0.5,
     # --- Filtro RX ---
     "rx_required" : False,
-    "rx_max_age" : 4,
+    "rx_max_age" : 20,
     "rx_bonus_score" : True,
     # --- Modulo Breakout ---
-    "breakout_on" : True,
+    "breakout_on" : False,
     "breakout_min_light" : 2,
     "breakout_ema_gap_pct" : 0.2,
     "breakout_max_rv" : 15,
@@ -1285,65 +1315,65 @@ DEFAULT_EA_CONFIG = {
     "breakout_min_body" : 0.3,
     "breakout_score_bonus" : -80,
     # --- Modulo Reversal ---
-    "reversal_on" : False,
+    "reversal_on" : True,
     "dynamic_reversal_on" : True,
     "reversal_observe" : False,
-    "rev_lots" : 0.01,
-    "reversal_rv" : 65,
+    "rev_lots" : 0.05,
+    "reversal_rv" : 70,
     "reversal_rv_max" : 120,
-    "reversal_adr" : 90.0,
+    "reversal_adr" : 100.0,
     "rev_req_decel" : True,
-    "rev_min_decel" : 5,
+    "rev_min_decel" : 1.5,
     "rev_req_rx" : True,
     "rev_rx_bonus" : True,
-    "rev_req_diverg" : True,
+    "rev_req_diverg" : False,
     "rev_diverg_bars" : 8,
     "rev_req_hist_flip" : True,
-    "rev_max_hist_age" : 3,
+    "rev_max_hist_age" : 5,
     # --- Orari e sessione ---
     "session_filter_on" : True,
-    "session_start_utc" : 9,
-    "session_end_utc" : 14,
-    "time_offset" : -1,
+    "session_start_utc" : 7,
+    "session_end_utc" : 17,
+    "time_offset" : 0,
     "no_night_trade" : True,
     "night_start_h" : 23,
     "night_end_h" : 7,
     "sunday_start_h" : 23,
-    "fri_close_profit_h" : 20,
+    "fri_close_profit_h" : 21,
     "fri_close_profit_m" : 0,
     "fri_close_loss_h" : 22,
     "fri_close_loss_m" : 0,
-    "fri_force_close_h" : 22,
-    "fri_force_close_m" : 30,
+    "fri_force_close_h" : 23,
+    "fri_force_close_m" : 0,
     # --- Dati, AI e log ---
     "data_mode" : 1,
-    "csv_file" : 'AI_M15_LIGHT.csv',
+    "csv_file" : 'ProfitRadarData.csv',
     "csv_max_age_sec" : 0,
     "radar_indicator" : 'THE_PROFIT_RADAR_PRO_by_ULTIMA_MARKETS_v2_7',
     "export_csv" : True,
     "auto_fallback" : True,
-    "fallback_after" : 1,
+    "fallback_after" : 3,
     "show_export_btn" : True,
     "auto_export" : True,
     "strategy_test" : False,
     "ai_url" : 'https://profit-radar-ai.onrender.com/predict',
-    "ai_timeout" : 18000,
+    "ai_timeout" : 5000,
     "ai_log" : True,
     "test_trade" : False,
     # --- Tecnici e sicurezza ---
     "magic_number" : 270101,
-    "max_slippage" : 3,
-    "max_spread" : 30,
-    "spread_dyn_mult" : 3.0,
-    "atr_mult" : 1.2,
+    "max_slippage" : 30,
+    "max_spread" : 20,
+    "spread_dyn_mult" : 2.0,
+    "atr_mult" : 1.5,
     "atr_period" : 14,
-    "fractal_bars" : 50,
+    "fractal_bars" : 5,
     # --- Dashboard grafico MT4 ---
-    "dash_x" : 1300,
-    "dash_y" : 30,
-    "dash_font_size" : 9,
+    "dash_x" : 10,
+    "dash_y" : 10,
+    "dash_font_size" : 10,
     "dash_color" : 16777215,
-    "dash_bg_color" : 2626580,
+    "dash_bg_color" : 3100495,
     "dash_bg" : True,
 }
 
@@ -1446,9 +1476,9 @@ def update_ea_config():
                 new_val = data[key]
                 bool_keys = {"use_ai", "send_feedback", "daily_stop_on", "dynamic_lots_on", "no_monday_trade", "no_buy", "hyper_on", "tp_adaptive", "trailing_on", "rx_required", "rx_bonus_score", "breakout_on", "breakout_req_rx", "breakout_atr_exp", "breakout_price_ema", "reversal_on", "dynamic_reversal_on", "reversal_observe", "rev_req_decel", "rev_req_rx", "rev_rx_bonus", "rev_req_diverg", "rev_req_hist_flip", "session_filter_on", "no_night_trade", "export_csv", "auto_fallback", "show_export_btn", "auto_export", "strategy_test", "ai_log", "test_trade", "dash_bg"}
 
-                int_keys = {"aggressiveness", "ai_min_conf", "max_consec_loss", "max_concurrent", "max_per_pair", "dynamic_lookback", "tp_percent", "tp_percent_min", "max_tp_pips", "be_pips", "be_profit", "trail_step_pips", "rv_max", "max_consecutive", "rx_max_age", "breakout_min_light", "breakout_max_rv", "breakout_max_rx_age", "breakout_score_bonus", "reversal_rv", "reversal_rv_max", "rev_min_decel", "rev_diverg_bars", "rev_max_hist_age", "session_start_utc", "session_end_utc", "time_offset", "night_start_h", "night_end_h", "sunday_start_h", "fri_close_profit_h", "fri_close_profit_m", "fri_close_loss_h", "fri_close_loss_m", "fri_force_close_h", "fri_force_close_m", "data_mode", "csv_max_age_sec", "fallback_after", "ai_timeout", "magic_number", "max_slippage", "max_spread", "atr_period", "fractal_bars", "dash_x", "dash_y", "dash_font_size", "dash_color", "dash_bg_color"}
+                int_keys = {"aggressiveness", "ai_min_conf", "max_consec_loss", "max_concurrent", "max_per_pair", "dynamic_lookback", "tp_percent", "tp_percent_min", "max_tp_pips", "be_pips", "be_profit", "trail_step_pips", "rv_max", "max_consecutive", "rx_max_age", "breakout_min_light", "breakout_max_rv", "breakout_max_rx_age", "breakout_score_bonus", "reversal_rv", "reversal_rv_max", "rev_diverg_bars", "rev_max_hist_age", "session_start_utc", "session_end_utc", "time_offset", "night_start_h", "night_end_h", "sunday_start_h", "fri_close_profit_h", "fri_close_profit_m", "fri_close_loss_h", "fri_close_loss_m", "fri_force_close_h", "fri_force_close_m", "data_mode", "csv_max_age_sec", "fallback_after", "ai_timeout", "magic_number", "max_slippage", "max_spread", "atr_period", "fractal_bars", "dash_x", "dash_y", "dash_font_size", "dash_color", "dash_bg_color"}
 
-                float_keys = {"loss_weight", "fixed_lots", "max_lots_cap", "max_lots_safety", "friday_lots", "afternoon_lots", "min_rr", "trail_activate", "trail_atr_mult", "adr_max", "min_ema_gap_pct", "rev_min_ema_gap_pct", "breakout_ema_gap_pct", "breakout_max_adx", "breakout_max_adr", "breakout_min_rr", "breakout_min_body", "rev_lots", "reversal_adr", "spread_dyn_mult", "atr_mult"}
+                float_keys = {"loss_weight", "fixed_lots", "max_lots_cap", "max_lots_safety", "friday_lots", "afternoon_lots", "min_rr", "trail_activate", "trail_atr_mult", "adr_max", "min_ema_gap_pct", "rev_min_ema_gap_pct", "breakout_ema_gap_pct", "breakout_max_adx", "breakout_max_adr", "breakout_min_rr", "breakout_min_body", "rev_lots", "reversal_adr", "spread_dyn_mult", "atr_mult", "rev_min_decel"}
 
                 str_keys = {"symbol_blacklist", "hyper_symbols", "csv_file", "radar_indicator", "ai_url"}
 
@@ -2523,7 +2553,7 @@ function saveAllConfig(btn = null){
     reversal_rv_max:parseInt(document.getElementById('cfgReversalRvMax').value),
     reversal_adr:parseFloat(document.getElementById('cfgReversalAdr').value),
     rev_req_decel:document.getElementById('cfgRevReqDecel').value==='true',
-    rev_min_decel:parseInt(document.getElementById('cfgRevMinDecel').value),
+    rev_min_decel:parseFloat(document.getElementById('cfgRevMinDecel').value),
     rev_req_rx:document.getElementById('cfgRevReqRx').value==='true',
     rev_rx_bonus:document.getElementById('cfgRevRxBonus').value==='true',
     rev_req_diverg:document.getElementById('cfgRevReqDiverg').value==='true',
