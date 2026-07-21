@@ -140,6 +140,7 @@ extern int    InpBreakoutScoreBonus = -80;       // Breakout: bonus punteggio in
 //=== REVERSAL (TREND MATURO) =========================================
 extern string _s6_              = "===== MODULO REVERSAL =====";   // ----------
 extern bool   InpReversalOn     = true;           // Reversal: fa trade reali?
+extern bool   InpDynamicReversalOn = true;        // Reversal: calcolo dinamico dei picchi per ciascun cross?
 extern bool   InpReversalObserve = false;         // Reversal: solo osservazione (no trade)
 extern double InpRevLots         = 0.01;          // Reversal: lotto dedicato (0=usa lotto principale)
 extern string InpRevTestMsg     = "";             // Reversal: testo di test per verificare il CSV
@@ -237,6 +238,9 @@ double   g_emaGapPct[MAX_PAIRS];       // Distanza EMA21-EMA200 in %
 double   g_emaGapPctPrev[MAX_PAIRS];   // Gap precedente (per slope)
 double   g_adx[MAX_PAIRS];
 double   g_radarValue[MAX_PAIRS];
+double   g_dynamicReversalRV[MAX_PAIRS];
+bool     g_peaksCalculated = false;
+datetime g_lastPeakCalcTime = 0;
 int      g_radarType[MAX_PAIRS];
 int      g_histogramState[MAX_PAIRS];
 double   g_pipFatti[MAX_PAIRS];
@@ -422,6 +426,8 @@ void   ParseRX(string s, int &rxType, int &rxAge, bool &rxPresent);
 bool   ValidateMarketData();
 void   CollectMarketData();
 void   GetRadarData(string sym, int shift, double &value, string &histState);
+double CalculateAveragePeak(string sym, int lookbackBars);
+void   UpdateDynamicPeaks();
 int    DeriveRadarType(int histState, double rv);
 void   GetADR(string sym, double &pipFatti, double &media10gg);
 void   ExportCSVLog();
@@ -560,6 +566,7 @@ int OnInit()
    g_eeGrayN = 0;
 
    ArrayInitialize(g_prevRV, 0);
+   ArrayInitialize(g_dynamicReversalRV, 0.0);
    ArrayInitialize(g_prev2RV, 0);
    ArrayInitialize(g_emaGapPct, 0);
    ArrayInitialize(g_emaGapPctPrev, 0);
@@ -1216,9 +1223,32 @@ bool ReadCSV()
       g_radarType[idx]      = DeriveRadarType(g_histogramState[idx], parsedRV);
       ParseADR(fields[8], g_pipFatti[idx], g_media10gg[idx]);
 
+      //--- Calcolo autonomo e reale del Filtro RX via Price Action (calcolato su 10 GIORNI D1)
       g_rxType[idx]    = RX_NONE;
       g_rxAge[idx]     = 0;
       g_rxPresent[idx] = false;
+
+      int highestIdx_csv = iHighest(fields[0], PERIOD_D1, MODE_HIGH, 10, 1);
+      int lowestIdx_csv  = iLowest(fields[0], PERIOD_D1, MODE_LOW, 10, 1);
+      if(highestIdx_csv >= 0 && lowestIdx_csv >= 0)
+      {
+         double highestHigh = iHigh(fields[0], PERIOD_D1, highestIdx_csv);
+         double lowestLow   = iLow(fields[0], PERIOD_D1, lowestIdx_csv);
+         double curPrice    = iClose(fields[0], PERIOD_M15, 1);
+
+         if(curPrice > highestHigh)
+         {
+            g_rxType[idx]    = RX_NEW_H;
+            g_rxPresent[idx] = true;
+            g_rxAge[idx]     = 1;
+         }
+         else if(curPrice < lowestLow)
+         {
+            g_rxType[idx]    = RX_NEW_L;
+            g_rxPresent[idx] = true;
+            g_rxAge[idx]     = 1;
+         }
+      }
 
       if(g_media10gg[idx] > 0)
          g_adrPercent[idx] = (g_pipFatti[idx] / g_media10gg[idx]) * 100.0;
@@ -1529,9 +1559,55 @@ void CollectMarketData()
       else
          g_adrPercent[idx] = 999.9;
 
+      //--- Recupero del Filtro RX dall'oggetto grafico del Radar (con fallback Price Action)
       g_rxType[idx]    = RX_NONE;
       g_rxAge[idx]     = 0;
       g_rxPresent[idx] = false;
+
+      string rx_objName = "RadarRX_" + IntegerToString(p);
+      bool rxFoundInChart = false;
+
+      if(ObjectFind(0, rx_objName) >= 0)
+      {
+         string rxText = ObjectGetString(0, rx_objName, OBJPROP_TEXT);
+         if(StringLen(rxText) > 0 && rxText != "-" && rxText != "--" && rxText != "---")
+         {
+            ParseRX(rxText, g_rxType[idx], g_rxAge[idx], g_rxPresent[idx]);
+            if(g_rxPresent[idx])
+            {
+               rxFoundInChart = true;
+               Print("[RX] ", sym, " segnale letto da grafico (", rx_objName, "): ", rxText);
+            }
+         }
+      }
+
+      //--- Fallback autonomo via Price Action se l'oggetto grafico del Radar non viene trovato o e' vuoto (calcolato su 10 GIORNI)
+      if(!rxFoundInChart)
+      {
+         int highestIdx_d = iHighest(sym, PERIOD_D1, MODE_HIGH, 10, 1);
+         int lowestIdx_d  = iLowest(sym, PERIOD_D1, MODE_LOW, 10, 1);
+         if(highestIdx_d >= 0 && lowestIdx_d >= 0)
+         {
+            double highestHigh = iHigh(sym, PERIOD_D1, highestIdx_d);
+            double lowestLow   = iLow(sym, PERIOD_D1, lowestIdx_d);
+            double curPrice    = iClose(sym, PERIOD_M15, shift);
+
+            if(curPrice > highestHigh)
+            {
+               g_rxType[idx]    = RX_NEW_H;
+               g_rxPresent[idx] = true;
+               g_rxAge[idx]     = 1;
+               Print("[RX] ", sym, " segnale calcolato via Price Action (10 GIORNI): NEW-H (eta' 1)");
+            }
+            else if(curPrice < lowestLow)
+            {
+               g_rxType[idx]    = RX_NEW_L;
+               g_rxPresent[idx] = true;
+               g_rxAge[idx]     = 1;
+               Print("[RX] ", sym, " segnale calcolato via Price Action (10 GIORNI): NEW-L (eta' 1)");
+            }
+         }
+      }
       g_valid[idx]  = true;
       g_score[idx]  = 99999;
       g_origin[idx] = ORIGIN_STD;
@@ -1548,6 +1624,16 @@ void CollectMarketData()
 
    if(g_dataCount > 0)
       Print("[AUTO] Dati: ", g_dataCount, " cross | Non-GRAY: ", activeCross, "/28");
+
+   if(g_dataCount > 0)
+   {
+      if(!g_peaksCalculated || TimeCurrent() - g_lastPeakCalcTime > 14400)
+      {
+         UpdateDynamicPeaks();
+         g_peaksCalculated = true;
+         g_lastPeakCalcTime = TimeCurrent();
+      }
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -3379,9 +3465,14 @@ void ProcessReversal()
       double absRV = MathAbs(g_radarValue[i]);
       double absPrevRV = MathAbs(g_prevRV[i]);
 
-      if(absRV < InpReversalRV)
+      double minRV = InpReversalRV;
+      if(InpDynamicReversalOn && g_dynamicReversalRV[i] > 0)
       {
-         Print("[REV] ", g_symbol[i], " SCARTATO: |RV|=", DoubleToString(absRV, 1), " < ", InpReversalRV, " (trend non estremo)");
+         minRV = g_dynamicReversalRV[i];
+      }
+      if(absRV < minRV)
+      {
+         Print("[REV] ", g_symbol[i], " SCARTATO: |RV|=", DoubleToString(absRV, 1), " < ", DoubleToString(minRV, 1), " (trend non estremo dinamico)");
          continue;
       }
       if(absRV > InpReversalRVMax)
@@ -4727,7 +4818,16 @@ void SyncWithServer()
    json += "\"daily_stopped\":" + (g_dailyStopped ? "true" : "false") + ",";
    json += "\"daily_stop_on\":" + (InpDailyStopOn ? "true" : "false") + ",";
    json += "\"loss_weight\":" + DoubleToString(InpLossWeight, 1) + ",";
-   json += "\"ea_version\":\"" + VERSION_STR + "\"";
+   json += "\"ea_version\":\"" + VERSION_STR + "\",";
+   
+   string peaksJson = "{";
+   for(int p_idx = 0; p_idx < g_dataCount; p_idx++)
+   {
+      peaksJson += "\"" + NormSym(g_symbol[p_idx]) + "\":" + DoubleToString(g_dynamicReversalRV[p_idx], 1);
+      if(p_idx < g_dataCount - 1) peaksJson += ",";
+   }
+   peaksJson += "}";
+   json += "\"peaks\":" + peaksJson;
    json += "}";
 
    //--- Invia
@@ -6036,6 +6136,23 @@ void SyncWithServer()
          {
             InpReversalOn = newVal;
             Print("[SYNC] Reversal ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
+         }
+      }
+   }
+
+   //--- Estrai dynamic_reversal_on
+   int pos_dynamic_reversal_on = StringFind(respStr, "\"dynamic_reversal_on\"", cfgPos);
+   if(pos_dynamic_reversal_on >= 0)
+   {
+      int colonP = StringFind(respStr, ":", pos_dynamic_reversal_on);
+      if(colonP >= 0)
+      {
+         string valStr = StringSubstr(respStr, colonP + 1, 6);
+         bool newVal = (StringFind(valStr, "true") >= 0);
+         if(newVal != InpDynamicReversalOn)
+         {
+            InpDynamicReversalOn = newVal;
+            Print("[SYNC] Reversal dinamico ", (newVal ? "ATTIVATO" : "DISATTIVATO"), " da dashboard");
          }
       }
    }
@@ -8199,3 +8316,99 @@ void ABTestGPTCall(int idx, string tag, string lgbmSignal, int lgbmConf)
 //+------------------------------------------------------------------+
 // |  END OF EA                                                        |
 //+------------------------------------------------------------------+
+
+
+//+------------------------------------------------------------------+
+//|  DYNAMIC RADAR PEAKS ANALYSIS                                    |
+//+------------------------------------------------------------------+
+
+//--- Calcola il picco medio del Radar Value su M15 per ciascun cross usando i 4 picchi maggiori negli ultimi 10 giorni
+double CalculateAveragePeak(string sym, int lookbackBars)
+{
+   double peaks[100];
+   ArrayInitialize(peaks, 0.0);
+   int peakCount = 0;
+   
+   double currentWaveMax = 0;
+   bool inWave = false;
+   
+   for(int b = lookbackBars - 1; b >= 0; b--)
+   {
+      double val = 0;
+      string histSt = "";
+      GetRadarData(sym, b, val, histSt);
+      
+      double absVal = MathAbs(val);
+      if(absVal > 0.01 && histSt != "GRAY" && histSt != "NONE")
+      {
+         inWave = true;
+         if(absVal > currentWaveMax)
+         {
+            currentWaveMax = absVal;
+         }
+      }
+      else
+      {
+         if(inWave)
+         {
+            // La wave e' finita, registriamo il picco
+            if(currentWaveMax > 15.0 && currentWaveMax < 150.0) // Escludi piccoli sali-scendi o valori pazzi
+            {
+               if(peakCount < 100)
+               {
+                  peaks[peakCount] = currentWaveMax;
+                  peakCount++;
+               }
+            }
+            inWave = false;
+            currentWaveMax = 0;
+         }
+      }
+   }
+   
+   // Se l'ultima wave e' ancora aperta alla fine dello storico analizzato
+   if(inWave && currentWaveMax > 15.0 && currentWaveMax < 150.0 && peakCount < 100)
+   {
+      peaks[peakCount] = currentWaveMax;
+      peakCount++;
+   }
+   
+   if(peakCount > 0)
+   {
+      // Ordiniamo l'array in ordine crescente. I picchi maggiori saranno alla fine dell'array (indici alti).
+      ArraySort(peaks, WHOLE_ARRAY, 0, MODE_ASCEND);
+      
+      double sum = 0;
+      int countToAverage = MathMin(4, peakCount); // Ne prendiamo al massimo 4 (i maggiori)
+      
+      for(int j = 0; j < countToAverage; j++)
+      {
+         sum += peaks[100 - 1 - j];
+      }
+      
+      return sum / countToAverage;
+   }
+   return 0; // Fallback se nessun picco trovato
+}
+
+//--- Calcola e aggiorna i picchi per tutti i cross attivi
+void UpdateDynamicPeaks()
+{
+   Print("[PEAK] Inizio calcolo picchi dinamici per i 28 cross...");
+   for(int i = 0; i < g_dataCount; i++)
+   {
+      string sym = g_symbol[i];
+      double avgPeak = CalculateAveragePeak(sym, 1000); // scansione di 1000 barre M15 (~10 giorni)
+      if(avgPeak > 15.0 && avgPeak < 150.0)
+      {
+         g_dynamicReversalRV[i] = NormalizeDouble(avgPeak, 1);
+         Print("[PEAK] ", sym, " picco dinamico calcolato: ", DoubleToString(g_dynamicReversalRV[i], 1));
+      }
+      else
+      {
+         g_dynamicReversalRV[i] = InpReversalRV; // Fallback al valore di input fisso
+         Print("[PEAK] ", sym, " nessun picco trovato, usato fallback: ", InpReversalRV);
+      }
+   }
+   Print("[PEAK] Fine calcolo picchi dinamici.");
+}
