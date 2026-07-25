@@ -680,6 +680,7 @@ refresh();
 </script>
 </body>
 </html>"""
+    return html
 
 # ============================================================
 #  AVVIO SERVER
