@@ -1347,7 +1347,7 @@ DEFAULT_EA_CONFIG = {
     "fri_force_close_m" : 0,
     # --- Dati, AI e log ---
     "data_mode" : 1,
-    "csv_file" : 'ProfitRadarData.csv',
+    "csv_file" : 'PRP_TrustedLatest.csv',
     "csv_max_age_sec" : 0,
     "radar_indicator" : 'THE_PROFIT_RADAR_PRO_by_ULTIMA_MARKETS_v2_7',
     "export_csv" : True,
@@ -2235,7 +2235,7 @@ details.section > :not(summary) {
   <div class="cfg-item"><label>Fonte dati<span class="tooltip"> ⓘ<span class="tooltiptext">0=CSV, 1=Auto, 2=CSV forzato. Lascia 1.</span></span></label>
     <input type="number" id="cfgDataMode" value="1" min="0" max="2" step="1"></div>
   <div class="cfg-item"><label>Nome file CSV<span class="tooltip"> ⓘ<span class="tooltiptext">Nome del file CSV con i dati dell&#39;indicatore.</span></span></label>
-    <input type="text" id="cfgCsvFile" value="AI_M15_LIGHT.csv"></div>
+    <input type="text" id="cfgCsvFile" value="PRP_TrustedLatest.csv"></div>
   <div class="cfg-item"><label>CSV eta max (sec)<span class="tooltip"> ⓘ<span class="tooltiptext">0 = illimitata. Altrimenti scarta il CSV più vecchio di N secondi.</span></span></label>
     <input type="number" id="cfgCsvMaxAgeSec" value="0" min="0" max="3600" step="60"></div>
   <div class="cfg-item"><label>Nome indicatore Radar<span class="tooltip"> ⓘ<span class="tooltiptext">Nome esatto dell&#39;indicatore Radar su MT4.</span></span></label>
