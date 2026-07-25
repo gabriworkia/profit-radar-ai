@@ -1,7 +1,8 @@
 """
-Profit Radar Pro — Clean AI Server v5.0
+Profit Radar Pro — Clean AI Server v5.1
 =========================================
-Server Flask interamente riprogettato e ripulito per la nuova architettura.
+Server Flask interamente riprogettato e riscritto da zero.
+Usa una struttura HTML statica (senza f-string) per escludere qualsiasi problema di escaping.
 Fornisce SOLO i parametri del nuovo EA "Executor" e i dati del "Data Collector".
 """
 
@@ -83,7 +84,8 @@ DEFAULT_EA_CONFIG = {
 
 ea_status = {
     "last_update": None, "balance": 0, "equity": 0, "open_trades": 0, "daily_pnl": 0,
-    "daily_wins": 0, "daily_losses": 0, "daily_win_amount": 0, "daily_loss_amount": 0,
+    "daily_wins": 0, "daily_losses": 0, "consecutive_losses": 0, "daily_stopped": False,
+    "daily_win_amount": 0, "daily_loss_amount": 0, "loss_weight": 1.5,
     "ai_calls": 0, "ai_confirm": 0, "ai_reject": 0, "ai_errors": 0, "ai_missed_trades": 0,
     "warmup_ok": False, "warmup_last": None, "data_source": "LIVE", "cross_active": 0, "cross_total": 0,
     "ea_version": "2.00 (Dual)", "peaks": {}
@@ -269,52 +271,53 @@ def update_ea_config():
 
 @app.route("/dashboard", methods=["GET"])
 def dashboard_page():
-    cfg = load_ea_config()
-    html = f"""<!DOCTYPE html>
+    # USIAMO UNA STRINGA STATICA TRIPLE-QUOTED SENZA PREFISSO f 
+    # Questo esclude completamente qualsiasi errore di compilazione o escaping f-string!
+    html = """<!DOCTYPE html>
 <html>
 <head>
 <title>Radar Executor Dashboard</title>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-*{{margin:0;padding:0;box-sizing:border-box}}
-body{{font-family:'Segoe UI',system-ui,sans-serif;background:#0a0a1a;color:#e0e0e0;min-height:100vh}}
-.container{{max-width:960px;margin:0 auto;padding:12px}}
-h1{{text-align:center;font-size:1.3em;padding:12px 0;color:#4fc3f7;border-bottom:1px solid #1a1a3a;margin-bottom:10px}}
-h1 span{{color:#81c784}}
-.section{{background:#12122a;border-radius:10px;padding:14px;margin-bottom:12px;border:1px solid #1e1e40}}
-.section h2{{font-size:0.95em;color:#4fc3f7;margin-bottom:10px;display:flex;align-items:center;gap:8px}}
-.section h2::before{{content:'';width:4px;height:16px;background:#4fc3f7;border-radius:2px}}
-.row{{display:flex;flex-wrap:wrap;gap:8px}}
-.card{{flex:1;min-width:140px;background:#1a1a35;border-radius:8px;padding:10px;text-align:center}}
-.card .val{{font-size:1.6em;font-weight:700;line-height:1.3}}
-.card .lbl{{font-size:0.7em;color:#888;text-transform:uppercase;margin-top:2px}}
-.green{{color:#81c784}}.red{{color:#ef5350}}.yellow{{color:#ffd54f}}.blue{{color:#4fc3f7}}.white{{color:#e0e0e0}}
-.status-dot{{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}}
-.dot-green{{background:#81c784;box-shadow:0 0 6px #81c784}}
-.dot-red{{background:#ef5350;box-shadow:0 0 6px #ef5350}}
-.dot-yellow{{background:#ffd54f;box-shadow:0 0 6px #ffd54f}}
-.dot-gray{{background:#666}}
-table{{width:100%;border-collapse:collapse;font-size:0.78em}}
-th{{text-align:left;padding:6px 8px;background:#1a1a35;color:#888;text-transform:uppercase;font-size:0.85em;border-bottom:1px solid #2a2a50}}
-td{{padding:5px 8px;border-bottom:1px solid #15152a}}
-tr:hover{{background:#1a1a35}}
-.btn{{display:inline-block;padding:8px 16px;border:none;border-radius:6px;cursor:pointer;font-size:0.85em;font-weight:600;transition:all .2s}}
-.btn:hover{{transform:translateY(-1px);opacity:0.9}}
-.btn-blue{{background:#1565c0;color:#fff}}
-.btn-row{{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}}
-.config-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-top:8px}}
-.cfg-item{{background:#1a1a35;border-radius:6px;padding:10px}}
-.cfg-item label{{display:block;font-size:0.75em;color:#888;margin-bottom:4px;text-transform:uppercase}}
-.cfg-item input,.cfg-item select{{width:100%;padding:6px 8px;background:#0a0a1a;border:1px solid #2a2a50;border-radius:4px;color:#e0e0e0;font-size:0.9em}}
-.refresh-bar{{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:0.8em;color:#666}}
-@media(max-width:600px){{.card{{min-width:100px}}.card .val{{font-size:1.3em}}.config-grid{{grid-template-columns:1fr}}}}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#0a0a1a;color:#e0e0e0;min-height:100vh}
+.container{max-width:960px;margin:0 auto;padding:12px}
+h1{text-align:center;font-size:1.3em;padding:12px 0;color:#4fc3f7;border-bottom:1px solid #1a1a3a;margin-bottom:10px}
+h1 span{color:#81c784}
+.section{background:#12122a;border-radius:10px;padding:14px;margin-bottom:12px;border:1px solid #1e1e40}
+.section h2{font-size:0.95em;color:#4fc3f7;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.section h2::before{content:'';width:4px;height:16px;background:#4fc3f7;border-radius:2px}
+.row{display:flex;flex-wrap:wrap;gap:8px}
+.card{flex:1;min-width:140px;background:#1a1a35;border-radius:8px;padding:10px;text-align:center}
+.card .val{font-size:1.6em;font-weight:700;line-height:1.3}
+.card .lbl{font-size:0.7em;color:#888;text-transform:uppercase;margin-top:2px}
+.green{color:#81c784}.red{color:#ef5350}.yellow{color:#ffd54f}.blue{color:#4fc3f7}.white{color:#e0e0e0}
+.status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+.dot-green{background:#81c784;box-shadow:0 0 6px #81c784}
+.dot-red{background:#ef5350;box-shadow:0 0 6px #ef5350}
+.dot-yellow{background:#ffd54f;box-shadow:0 0 6px #ffd54f}
+.dot-gray{background:#666}
+table{width:100%;border-collapse:collapse;font-size:0.78em}
+th{text-align:left;padding:6px 8px;background:#1a1a35;color:#888;text-transform:uppercase;font-size:0.85em;border-bottom:1px solid #2a2a50}
+td{padding:5px 8px;border-bottom:1px solid #15152a}
+tr:hover{background:#1a1a35}
+.btn{display:inline-block;padding:8px 16px;border:none;border-radius:6px;cursor:pointer;font-size:0.85em;font-weight:600;transition:all .2s}
+.btn:hover{transform:translateY(-1px);opacity:0.9}
+.btn-blue{background:#1565c0;color:#fff}
+.btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.config-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-top:8px}
+.cfg-item{background:#1a1a35;border-radius:6px;padding:10px}
+.cfg-item label{display:block;font-size:0.75em;color:#888;margin-bottom:4px;text-transform:uppercase}
+.cfg-item input,.cfg-item select{width:100%;padding:6px 8px;background:#0a0a1a;border:1px solid #2a2a50;border-radius:4px;color:#e0e0e0;font-size:0.9em}
+.refresh-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:0.8em;color:#666}
+@media(max-width:600px){.card{min-width:100px}.card .val{font-size:1.3em}.config-grid{grid-template-columns:1fr}}
 
 /* === TOOLTIP === */
-.tooltip{{position:relative;display:inline-block;margin-left:5px;cursor:help;color:#4fc3f7;font-weight:700}}
-.tooltip .tooltiptext{{visibility:hidden;width:260px;background:#1a1a35;color:#e0e0e0;text-align:left;border-radius:8px;padding:10px;border:1px solid #4fc3f7;position:absolute;z-index:100;bottom:125%;left:50%;margin-left:-130px;opacity:0;transition:opacity .2s;font-size:.85em;line-height:1.4;text-transform:none;box-shadow:0 4px 12px rgba(0,0,0,.5)}}
-.tooltip .tooltiptext::after{{content:'';position:absolute;top:100%;left:50%;margin-left:-5px;border-width:5px;border-style:solid;border-color:#4fc3f7 transparent transparent transparent}}
-.tooltip:hover .tooltiptext{{visibility:visible;opacity:1}}
+.tooltip{position:relative;display:inline-block;margin-left:5px;cursor:help;color:#4fc3f7;font-weight:700}
+.tooltip .tooltiptext{visibility:hidden;width:260px;background:#1a1a35;color:#e0e0e0;text-align:left;border-radius:8px;padding:10px;border:1px solid #4fc3f7;position:absolute;z-index:100;bottom:125%;left:50%;margin-left:-130px;opacity:0;transition:opacity .2s;font-size:.85em;line-height:1.4;text-transform:none;box-shadow:0 4px 12px rgba(0,0,0,.5)}
+.tooltip .tooltiptext::after{content:'';position:absolute;top:100%;left:50%;margin-left:-5px;border-width:5px;border-style:solid;border-color:#4fc3f7 transparent transparent transparent}
+.tooltip:hover .tooltiptext{visibility:visible;opacity:1}
 </style>
 </head>
 <body>
@@ -362,83 +365,83 @@ tr:hover{{background:#1a1a35}}
 <div class="section"><h2>📁 File e Sincronizzazione</h2>
 <div class="config-grid">
   <div class="cfg-item"><label>File snapshot latest</label>
-    <input type="text" id="cfgCsvFile" value="{cfg.get('csv_file', 'PRP_TrustedLatest.csv')}"></div>
+    <input type="text" id="cfgCsvFile" value="PRP_TrustedLatest.csv"></div>
   <div class="cfg-item"><label>File ready flag</label>
-    <input type="text" id="cfgReadyFile" value="{cfg.get('ready_file', 'PRP_TrustedReady.csv')}"></div>
+    <input type="text" id="cfgReadyFile" value="PRP_TrustedReady.csv"></div>
   <div class="cfg-item"><label>File history storico</label>
-    <input type="text" id="cfgHistoryFile" value="{cfg.get('history_file', 'PRP_TrustedHistory.csv')}"></div>
+    <input type="text" id="cfgHistoryFile" value="PRP_TrustedHistory.csv"></div>
   <div class="cfg-item"><label>Timer EA (sec)</label>
-    <input type="number" id="cfgTimerSeconds" value="{cfg.get('timer_seconds', 10)}" min="1" max="60" step="1"></div>
+    <input type="number" id="cfgTimerSeconds" value="10" min="1" max="60" step="1"></div>
   <div class="cfg-item"><label>Stampa log MT4</label>
-    <select id="cfgVerboseJournal"><option value="true" {"selected" if cfg.get('verbose_journal') else ""}>Attivo</option><option value="false" {"" if cfg.get('verbose_journal') else "selected"}>Disattivo</option></select></div>
+    <select id="cfgVerboseJournal"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
   <div class="cfg-item"><label>Rielabora avvio</label>
-    <select id="cfgProcessCurrentInit"><option value="true" {"selected" if cfg.get('process_current_init') else ""}>Attivo</option><option value="false" {"" if cfg.get('process_current_init') else "selected"}>Disattivo</option></select></div>
+    <select id="cfgProcessCurrentInit"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
 </div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></div>
 
 <div class="section"><h2>⚙️ Generali e Rischio</h2>
 <div class="config-grid">
   <div class="cfg-item"><label>Magic Number</label>
-    <input type="number" id="cfgMagicNumber" value="{cfg.get('magic_number', 270202)}" min="1000" max="999999" step="1"></div>
+    <input type="number" id="cfgMagicNumber" value="270202" min="1000" max="999999" step="1"></div>
   <div class="cfg-item"><label>Lotto base</label>
-    <input type="number" id="cfgFixedLots" value="{cfg.get('fixed_lots', 0.07)}" min="0.01" max="1.0" step="0.01"></div>
+    <input type="number" id="cfgFixedLots" value="0.07" min="0.01" max="1.0" step="0.01"></div>
   <div class="cfg-item"><label>Max trade aperti</label>
-    <input type="number" id="cfgMaxConcurrent" value="{cfg.get('max_concurrent', 3)}" min="1" max="28" step="1"></div>
+    <input type="number" id="cfgMaxConcurrent" value="3" min="1" max="28" step="1"></div>
   <div class="cfg-item"><label>Max trade per coppia</label>
-    <input type="number" id="cfgMaxPerPair" value="{cfg.get('max_per_pair', 1)}" min="1" max="5" step="1"></div>
+    <input type="number" id="cfgMaxPerPair" value="1" min="1" max="5" step="1"></div>
   <div class="cfg-item"><label>Max ingressi per barra</label>
-    <input type="number" id="cfgMaxEntriesBar" value="{cfg.get('max_entries_bar', 2)}" min="1" max="5" step="1"></div>
+    <input type="number" id="cfgMaxEntriesBar" value="2" min="1" max="5" step="1"></div>
   <div class="cfg-item"><label>Spread max (punti)</label>
-    <input type="number" id="cfgMaxSpreadPoints" value="{cfg.get('max_spread_points', 30)}" min="5" max="100" step="5"></div>
+    <input type="number" id="cfgMaxSpreadPoints" value="30" min="5" max="100" step="5"></div>
   <div class="cfg-item"><label>Slippage</label>
-    <input type="number" id="cfgSlippage" value="{cfg.get('slippage', 3)}" min="1" max="10" step="1"></div>
+    <input type="number" id="cfgSlippage" value="3" min="1" max="10" step="1"></div>
   <div class="cfg-item"><label>Modulo Trend (Std)</label>
-    <select id="cfgAllowTrend"><option value="true" {"selected" if cfg.get('allow_trend') else ""}>Attivo</option><option value="false" {"" if cfg.get('allow_trend') else "selected"}>Disattivo</option></select></div>
+    <select id="cfgAllowTrend"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
   <div class="cfg-item"><label>Modulo Reversal</label>
-    <select id="cfgAllowReversal"><option value="true" {"selected" if cfg.get('allow_reversal') else ""}>Attivo</option><option value="false" {"" if cfg.get('allow_reversal') else "selected"}>Disattivo</option></select></div>
+    <select id="cfgAllowReversal"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
 </div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></div>
 
 <div class="section"><h2>🎯 Modulo Trend-Following</h2>
 <div class="config-grid">
   <div class="cfg-item"><label>RV minimo</label>
-    <input type="number" id="cfgTrendMinRV" value="{cfg.get('trend_min_rv', 5.0)}" min="1.0" max="50.0" step="0.5"></div>
+    <input type="number" id="cfgTrendMinRV" value="5.0" min="1.0" max="50.0" step="0.5"></div>
   <div class="cfg-item"><label>ADR% massimo</label>
-    <input type="number" id="cfgTrendMaxADR" value="{cfg.get('trend_max_adr', 70.0)}" min="10" max="100" step="1"></div>
+    <input type="number" id="cfgTrendMaxADR" value="70.0" min="10" max="100" step="1"></div>
   <div class="cfg-item"><label>ATR mult per SL</label>
-    <input type="number" id="cfgTrendSL_ATR_Mult" value="{cfg.get('trend_sl_mult', 1.5)}" min="0.5" max="3.0" step="0.1"></div>
+    <input type="number" id="cfgTrendSL_ATR_Mult" value="1.5" min="0.5" max="3.0" step="0.1"></div>
   <div class="cfg-item"><label>TP % ADR residuo</label>
-    <input type="number" id="cfgTrendTP_ADR_Pct" value="{cfg.get('trend_tp_pct', 80.0)}" min="10" max="100" step="1"></div>
+    <input type="number" id="cfgTrendTP_ADR_Pct" value="80.0" min="10" max="100" step="1"></div>
   <div class="cfg-item"><label>R:R minimo</label>
-    <input type="number" id="cfgMinRR_Trend" value="{cfg.get('trend_min_rr', 1.5)}" min="0.5" max="3.0" step="0.1"></div>
+    <input type="number" id="cfgMinRR_Trend" value="1.5" min="0.5" max="3.0" step="0.1"></div>
 </div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></div>
 
 <div class="section"><h2>🔄 Modulo Reversal (Inversione)</h2>
 <div class="config-grid">
   <div class="cfg-item"><label>Reversal dinamico (Picchi)</label>
-    <select id="cfgDynamicReversalOn"><option value="true" {"selected" if cfg.get('dynamic_reversal_on') else ""}>Attivo</option><option value="false" {"" if cfg.get('dynamic_reversal_on') else "selected"}>Disattivo</option></select></div>
+    <select id="cfgDynamicReversalOn"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
   <div class="cfg-item"><label>Reversal RV minimo</label>
-    <input type="number" id="cfgRevMinRV" value="{cfg.get('rev_min_rv', 70.0)}" min="30" max="150" step="1"></div>
+    <input type="number" id="cfgRevMinRV" value="70.0" min="30" max="150" step="1"></div>
   <div class="cfg-item"><label>Reversal ADR% minimo</label>
-    <input type="number" id="cfgRevMinADR" value="{cfg.get('rev_min_adr', 100.0)}" min="50" max="150" step="1"></div>
+    <input type="number" id="cfgRevMinADR" value="100.0" min="50" max="150" step="1"></div>
   <div class="cfg-item"><label>Distanza EMA min (pip)</label>
-    <input type="number" id="cfgRevMinEMADistPips" value="{cfg.get('rev_min_ema_dist', 20.0)}" min="5" max="100" step="1"></div>
+    <input type="number" id="cfgRevMinEMADistPips" value="20.0" min="5" max="100" step="1"></div>
   <div class="cfg-item"><label>ATR mult per SL</label>
-    <input type="number" id="cfgRevSL_ATR_Mult" value="{cfg.get('rev_sl_mult', 1.5)}" min="0.5" max="3.0" step="0.1"></div>
+    <input type="number" id="cfgRevSL_ATR_Mult" value="1.5" min="0.5" max="3.0" step="0.1"></div>
   <div class="cfg-item"><label>R:R minimo Reversal</label>
-    <input type="number" id="cfgMinRR_Reversal" value="{cfg.get('rev_min_rr', 1.5)}" min="0.5" max="3.0" step="0.1"></div>
+    <input type="number" id="cfgMinRR_Reversal" value="1.5" min="0.5" max="3.0" step="0.1"></div>
 </div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></div>
 
 <div class="section"><h2>🛡️ Gestione Post-Trade (Uscite)</h2>
 <div class="config-grid">
   <div class="cfg-item"><label>Profit Fade soglia R</label>
-    <input type="number" id="cfgProfitFadeR" value="{cfg.get('profit_fade_r', 0.70)}" min="0.1" max="1.0" step="0.05"></div>
+    <input type="number" id="cfgProfitFadeR" value="0.70" min="0.1" max="1.0" step="0.05"></div>
   <div class="cfg-item"><label>Loss Cut soglia R</label>
-    <input type="number" id="cfgLossCutR" value="{cfg.get('loss_cut_r', 0.60)}" min="0.1" max="1.0" step="0.05"></div>
+    <input type="number" id="cfgLossCutR" value="0.60" min="0.1" max="1.0" step="0.05"></div>
   <div class="cfg-item"><label>Chiudi su stato opposto</label>
-    <select id="cfgCloseOnOpposite"><option value="true" {"selected" if cfg.get('close_on_opposite') else ""}>Attivo</option><option value="false" {"" if cfg.get('close_on_opposite') else "selected"}>Disattivo</option></select></div>
+    <select id="cfgCloseOnOpposite"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
   <div class="cfg-item"><label>Chiudi su GRAY in profit</label>
-    <select id="cfgCloseOnGrayProfit"><option value="true" {"selected" if cfg.get('close_on_gray') else ""}>Attivo</option><option value="false" {"" if cfg.get('close_on_gray') else "selected"}>Disattivo</option></select></div>
+    <select id="cfgCloseOnGrayProfit"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
   <div class="cfg-item"><label>Chiudi su debole in profit</label>
-    <select id="cfgCloseOnWeakProfit"><option value="true" {"selected" if cfg.get('close_on_weak') else ""}>Attivo</option><option value="false" {"" if cfg.get('close_on_weak') else "selected"}>Disattivo</option></select></div>
+    <select id="cfgCloseOnWeakProfit"><option value="true">Attivo</option><option value="false">Disattivo</option></select></div>
 </div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></div>
 
 <div class="section"><h2>Ultimi 20 Trade</h2>
@@ -464,16 +467,16 @@ tr:hover{{background:#1a1a35}}
 
 <script>
 const API=window.location.origin;
-function fmt(v,d=2){{return v!=null?v.toFixed(d):'-'}}
-function pnlClass(v){{return v>0?'green':v<0?'red':'white'}}
-function refresh(){{
-  fetch(API+'/dashboard_data').then(r=>r.json()).then(d=>{{
+function fmt(v,d=2){return v!=null?v.toFixed(d):'-'}
+function pnlClass(v){return v>0?'green':v<0?'red':'white'}
+function refresh(){
+  fetch(API+'/dashboard_data').then(r=>r.json()).then(d=>{
     const ea=d.ea,srv=d.server,cfg=d.config;
     const dot=document.getElementById('eaDot');
     const age=ea.last_update?((Date.now()-new Date(ea.last_update))/1000/60):999;
-    if(age<5){{dot.className='status-dot dot-green';document.getElementById('eaStatus').textContent='EA Connesso'}}
-    else if(age<30){{dot.className='status-dot dot-yellow';document.getElementById('eaStatus').textContent='EA '+Math.round(age)+'m fa'}}
-    else{{dot.className='status-dot dot-gray';document.getElementById('eaStatus').textContent='EA offline'}}
+    if(age<5){dot.className='status-dot dot-green';document.getElementById('eaStatus').textContent='EA Connesso'}
+    else if(age<30){dot.className='status-dot dot-yellow';document.getElementById('eaStatus').textContent='EA '+Math.round(age)+'m fa'}
+    else{dot.className='status-dot dot-gray';document.getElementById('eaStatus').textContent='EA offline'}
     document.getElementById('lastUpdate').textContent='Aggiornato: '+new Date().toLocaleTimeString('it-IT');
     document.getElementById('balance').textContent=fmt(ea.balance);
     document.getElementById('equity').textContent=fmt(ea.equity);
@@ -483,35 +486,35 @@ function refresh(){{
 
     // --- Popola Tabella Statistiche e Picchi Dinamici ---
     const statsTable = document.getElementById('statsTable');
-    if (statsTable) {{
-      const stats = d.trade_stats || {{}};
-      const peaks = (d.ea && d.ea.peaks) ? d.ea.peaks : {{}};
-      const unified = {{}};
+    if (statsTable) {
+      const stats = d.trade_stats || {};
+      const peaks = (d.ea && d.ea.peaks) ? d.ea.peaks : {};
+      const unified = {};
       
-      Object.keys(stats).forEach(rawSym => {{
+      Object.keys(stats).forEach(rawSym => {
         const clean = rawSym.replace('+', '').toUpperCase().trim();
-        if (!unified[clean]) {{
-          unified[clean] = {{ count: 0, win_rate: 0, avg_rv: 0, max_rv: 0, peak: '-' }};
-        }}
+        if (!unified[clean]) {
+          unified[clean] = { count: 0, win_rate: 0, avg_rv: 0, max_rv: 0, peak: '-' };
+        }
         const s = stats[rawSym];
         unified[clean].count = s.count || 0;
         unified[clean].win_rate = s.win_rate != null ? s.win_rate : 0;
         unified[clean].avg_rv = s.avg_rv != null ? s.avg_rv : 0;
         unified[clean].max_rv = s.max_rv != null ? s.max_rv : 0;
-      }});
+      });
       
-      Object.keys(peaks).forEach(rawSym => {{
+      Object.keys(peaks).forEach(rawSym => {
         const clean = rawSym.replace('+', '').toUpperCase().trim();
-        if (!unified[clean]) {{
-          unified[clean] = {{ count: 0, win_rate: 0, avg_rv: 0, max_rv: 0, peak: '-' }};
-        }}
+        if (!unified[clean]) {
+          unified[clean] = { count: 0, win_rate: 0, avg_rv: 0, max_rv: 0, peak: '-' };
+        }
         unified[clean].peak = peaks[rawSym] != null ? peaks[rawSym] : '-';
-      }});
+      });
       
       const sortedSymbols = Object.keys(unified).sort();
       
-      if (sortedSymbols.length > 0) {{
-        statsTable.innerHTML = sortedSymbols.map(sym => {{
+      if (sortedSymbols.length > 0) {
+        statsTable.innerHTML = sortedSymbols.map(sym => {
           const u = unified[sym];
           let wrColor = u.win_rate >= 50 ? '#81c784' : u.count > 0 ? '#ef5350' : '#888';
           return '<tr>' +
@@ -522,11 +525,11 @@ function refresh(){{
             '<td>' + (u.count > 0 ? u.max_rv.toFixed(1) : '-') + '</td>' +
             '<td style="color:#4fc3f7"><strong>' + u.peak + '</strong></td>' +
             '</tr>';
-        }}).join('');
-      }} else {{
+        }).join('');
+      } else {
         statsTable.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#666;padding:12px;">In attesa del primo sync dell&apos;EA...</td></tr>';
-      }}
-    }}
+      }
+    }
 
     // --- Daily Stop W/L pesato ---
     const lw=cfg.loss_weight||1.5;
@@ -540,17 +543,17 @@ function refresh(){{
     const ss=document.getElementById('dStopState');
     ss.textContent=stopped?'🛑 STOP':'🟢 Attivo';ss.className='val '+(stopped?'red':'green');
     const bar=document.getElementById('dStopBar');
-    if(limit>0){{
+    if(limit>0){
       let pct=Math.min(100,Math.round(loss/limit*100));
       bar.style.width=pct+'%';
       bar.style.background=pct<50?'#81c784':pct<80?'#ffd54f':'#ef5350';
       document.getElementById('dStopPct').textContent=pct+'%';
       document.getElementById('dStopDetail').textContent='persi '+fmt(loss)+' / soglia '+fmt(limit)+' EUR (peso x'+lw+') | margine '+fmt(limit-loss);
-    }} else {{
+    } else {
       bar.style.width='0%';
       document.getElementById('dStopPct').textContent='-';
       document.getElementById('dStopDetail').textContent='In attesa della 1a vincita (per ora conta solo lo stop loss di fila)';
-    }}
+    }
 
     document.getElementById('cfgCsvFile').value=cfg.csv_file||'PRP_TrustedLatest.csv';
     document.getElementById('cfgReadyFile').value=cfg.ready_file||'PRP_TrustedReady.csv';
@@ -585,20 +588,20 @@ function refresh(){{
     document.getElementById('cfgCloseOnWeakProfit').value=cfg.close_on_weak?'true':'false';
 
     const tb=document.getElementById('tradeTable');
-    if(d.trade_history&&d.trade_history.length>0){{
-      tb.innerHTML=d.trade_history.reverse().map(t=>{{
+    if(d.trade_history&&d.trade_history.length>0){
+      tb.innerHTML=d.trade_history.reverse().map(t=>{
         const p=t.profit||0,w=t.won;
         return '<tr><td>'+(t.symbol||'-')+'</td><td>'+(t.direction||'-')+'</td><td>'+(t.module||'-')+'</td><td>'+fmt(t.pips,1)+'</td><td class="'+pnlClass(p)+'">'+(p>=0?'+':'')+fmt(p)+'€</td><td><span style="color:'+(w?'#81c784':'#ef5350')+'">'+(w?'WIN':'LOSS')+'</span></td></tr>'
-      }}).join('');
-    }}
-  }}).catch(e=>{{
+      }).join('');
+    }
+  }).catch(e=>{
     console.error('Dashboard fetch error:',e);
     document.getElementById('lastUpdate').textContent='❌ Errore connessione al server';
     document.getElementById('lastUpdate').style.color='#ef5350';
-  }});
-}}
-function saveAllConfig(btn = null){{
-  const cfg={{
+  });
+}
+function saveAllConfig(btn = null){
+  const cfg={
     csv_file:document.getElementById('cfgCsvFile').value,
     ready_file:document.getElementById('cfgReadyFile').value,
     history_file:document.getElementById('cfgHistoryFile').value,
@@ -630,54 +633,53 @@ function saveAllConfig(btn = null){{
     close_on_opposite:document.getElementById('cfgCloseOnOpposite').value==='true',
     close_on_gray:document.getElementById('cfgCloseOnGrayProfit').value==='true',
     close_on_weak:document.getElementById('cfgCloseOnWeakProfit').value==='true',
-  }};
-  fetch(API+'/ea_config',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(cfg)}}).then(r=>r.json()).then(d=>{{
+  };
+  fetch(API+'/ea_config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)}).then(r=>r.json()).then(d=>{
     const m_text = d.status==='ok'?'✅ '+d.message:'❌ '+(d.message||'errore');
     const m_color = d.status==='ok'?'#81c784':'#ef5350';
-    if(btn) {{
+    if(btn) {
       let m = btn.parentNode.querySelector('.cfg-msg');
-      if(!m) {{
+      if(!m) {
         m = document.createElement('span');
         m.className = 'cfg-msg';
         m.style.fontSize = '0.85em';
         m.style.marginLeft = '12px';
         m.style.alignSelf = 'center';
         btn.parentNode.appendChild(m);
-      }}
+      }
       m.textContent = m_text;
       m.style.color = m_color;
-      setTimeout(()=>{{m.textContent=''}},5000);
-    }}
-  }}).catch(()=>{{
+      setTimeout(()=>{m.textContent=''},5000);
+    }
+  }).catch(()=>{
     const err_text = '❌ Errore connessione';
-    if(btn) {{
+    if(btn) {
       let m = btn.parentNode.querySelector('.cfg-msg');
-      if(!m) {{
+      if(!m) {
         m = document.createElement('span');
         m.className = 'cfg-msg';
         m.style.fontSize = '0.85em';
         m.style.marginLeft = '12px';
         m.style.alignSelf = 'center';
         btn.parentNode.appendChild(m);
-      }}
+      }
       m.textContent = err_text;
       m.style.color = '#ef5350';
-      setTimeout(()=>{{m.textContent=''}},5000);
-    }}
-  }});
-}}
-function retrain() {{
+      setTimeout(()=>{m.textContent=''},5000);
+    }
+  });
+}
+function retrain() {
   document.getElementById('actionMsg').textContent='⏳ Riaddestramento...';
-  fetch(API+'/retrain',{{method:'POST'}}).then(r=>r.json()).then(d=>{{
+  fetch(API+'/retrain',{method:'POST'}).then(r=>r.json()).then(d=>{
     document.getElementById('actionMsg').innerHTML=d.status==='trained'?'✅ Trained! Samples: '+d.samples+' | WR: '+d.win_rate+'%':'⚠️ '+(d.error||'Errore');
-  }}).catch(()=>{{document.getElementById('actionMsg').textContent='❌ Errore connessione'}});
-}}
+  }).catch(()=>{document.getElementById('actionMsg').textContent='❌ Errore connessione'});
+}
 setInterval(refresh,5000);
 refresh();
 </script>
 </body>
 </html>"""
-    return html
 
 # ============================================================
 #  AVVIO SERVER
