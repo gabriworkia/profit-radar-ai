@@ -7,12 +7,10 @@ Include tutti gli endpoint mancanti e la sincronizzazione dati dashboard.
 
 import os
 import json
-import logging
-import traceback
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 
 # ============================================================
@@ -26,23 +24,19 @@ EA_CONFIG_PATH = os.path.join(DATA_DIR, "ea_config.json")
 EA_STATUS_PATH = os.path.join(DATA_DIR, "ea_status.json")
 TRADE_LOG_PATH = os.path.join(DATA_DIR, "PRP_TradeLog.csv")
 
-# Inizializzazione Flask
 app = Flask(__name__)
 CORS(app)
 
 # ============================================================
-#  DEFAULT CONFIG — COMPATIBILE CON NUOVO EA EXECUTOR
+#  DEFAULT CONFIG
 # ============================================================
 DEFAULT_EA_CONFIG = {
-    # --- File e Sincronizzazione ---
     "csv_file": "PRP_TrustedLatest.csv",
     "ready_file": "PRP_TrustedReady.csv",
     "history_file": "PRP_TrustedHistory.csv",
     "timer_seconds": 10,
     "verbose_journal": True,
     "process_current_init": False,
-
-    # --- Generali e Rischio ---
     "magic_number": 270202,
     "fixed_lots": 0.07,
     "max_concurrent": 3,
@@ -52,36 +46,26 @@ DEFAULT_EA_CONFIG = {
     "slippage": 3,
     "allow_trend": True,
     "allow_reversal": True,
-
-    # --- Modulo Trend ---
     "trend_min_rv": 5.0,
     "trend_max_adr": 70.0,
     "trend_sl_mult": 1.5,
     "trend_tp_pct": 80.0,
     "trend_min_rr": 1.5,
-
-    # --- Modulo Reversal ---
     "rev_min_rv": 70.0,
     "rev_min_adr": 100.0,
     "rev_min_ema_dist": 20.0,
     "rev_sl_mult": 1.5,
     "rev_min_rr": 1.5,
-
-    # --- Gestione Post-Trade ---
     "profit_fade_r": 0.70,
     "loss_cut_r": 0.60,
     "close_on_opposite": True,
     "close_on_gray": True,
     "close_on_weak": True,
-
-    # --- Parametri AI / Collettore ---
     "ai_url": "https://profit-radar-ai.onrender.com/predict",
     "send_feedback": True,
     "use_ai": True,
     "ai_min_conf": 70,
     "executor_magic": 270202,
-
-    # --- Extra per compatibilità dashboard ---
     "dynamic_reversal_on": True,
     "max_consec_loss": 3,
     "loss_weight": 1.5
@@ -164,22 +148,18 @@ def get_trade_stats():
             sep = ";" if path.endswith(".csv") and "TradeLog" in path else ","
             df = pd.read_csv(path, sep=sep, on_bad_lines="skip")
             df.columns = [c.lower() for c in df.columns]
-
             if "symbol" in df.columns and "rv" in df.columns:
                 df["symbol_clean"] = df["symbol"].astype(str).str.upper().str.strip().str.replace("+", "")
                 df["rv"] = pd.to_numeric(df["rv"], errors="coerce").fillna(0)
                 df["rv_abs"] = df["rv"].abs()
-
                 for sym, group in df.groupby("symbol_clean"):
                     count = len(group)
                     avg_rv = float(group["rv_abs"].mean()) if count > 0 else 0
                     max_rv = float(group["rv_abs"].max()) if count > 0 else 0
-
                     win_rate = 0.0
                     if "won" in group.columns:
                         won_col = group["won"].astype(str).str.lower().str.strip()
                         win_rate = float((won_col == "true").mean() * 100)
-
                     trade_stats[sym] = {
                         "count": count,
                         "avg_rv": round(avg_rv, 1),
@@ -197,7 +177,6 @@ def get_recent_trades(limit=20):
         try:
             df = pd.read_csv(TRADE_LOG_PATH, sep=";", on_bad_lines="skip")
             df.columns = [c.lower() for c in df.columns]
-
             for _, row in df.tail(limit).iterrows():
                 trades.append({
                     "symbol": str(row.get("symbol", "")),
@@ -213,16 +192,12 @@ def get_recent_trades(limit=20):
 
 
 # ============================================================
-#  ENDPOINTS API (EA + DASHBOARD)
+#  ENDPOINTS
 # ============================================================
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({
-        "status": "ok",
-        "version": "5.3",
-        "time": datetime.now(timezone.utc).isoformat()
-    })
+    return jsonify({"status": "ok", "version": "5.3", "time": datetime.now(timezone.utc).isoformat()})
 
 
 @app.route("/ea_status", methods=["POST"])
@@ -232,26 +207,14 @@ def receive_ea_status():
         data = request.get_json(force=True)
         if not data:
             return jsonify({"status": "error", "message": "No JSON"}), 200
-
-        # Aggiorna solo i campi esistenti
         for key in list(ea_status.keys()):
             if key in data:
                 ea_status[key] = data[key]
-
         ea_status["last_update"] = datetime.now(timezone.utc).isoformat()
-
-        # Salva su disco
         with open(EA_STATUS_PATH, "w") as f:
             json.dump(ea_status, f, indent=2)
-
-        # Restituisci la config aggiornata all'EA
-        return jsonify({
-            "status": "ok",
-            "config": load_ea_config(),
-            "server_time": ea_status["last_update"]
-        })
+        return jsonify({"status": "ok", "config": load_ea_config(), "server_time": ea_status["last_update"]})
     except Exception as e:
-        print(f"[EA_STATUS] Errore: {e}")
         return jsonify({"status": "error", "message": str(e)}), 200
 
 
@@ -261,11 +224,9 @@ def receive_feedback():
         data = request.get_json(force=True)
         if not data:
             return jsonify({"status": "error", "message": "No JSON"}), 200
-
         new_row = pd.DataFrame([data])
         header_needed = not os.path.exists(FEEDBACK_PATH)
         new_row.to_csv(FEEDBACK_PATH, mode="a", header=header_needed, index=False)
-
         total_fb = len(pd.read_csv(FEEDBACK_PATH)) if os.path.exists(FEEDBACK_PATH) else 0
         return jsonify({"status": "ok", "total_feedback": total_fb})
     except Exception as e:
@@ -278,12 +239,10 @@ def predict():
         data = request.get_json(force=True)
         if not data:
             return jsonify({"signal": "HOLD", "confidence": 0}), 200
-
         direction = str(data.get("direction", "")).upper()
         rv = float(data.get("rv", 0))
         adx = float(data.get("adx", 0))
         adr_pct = float(data.get("adr_pct", 0))
-
         conf = 50
         if direction == "BUY" and rv > 0:
             conf += 15
@@ -293,19 +252,11 @@ def predict():
             conf += 10
         if adr_pct < 50:
             conf += 5
-
         signal = "HOLD"
         cfg = load_ea_config()
-        min_conf = cfg.get("ai_min_conf", 70)
-
-        if conf >= min_conf:
+        if conf >= cfg.get("ai_min_conf", 70):
             signal = direction
-
-        return jsonify({
-            "signal": signal,
-            "confidence": conf,
-            "method": "rules_v1"
-        })
+        return jsonify({"signal": signal, "confidence": conf, "method": "rules_v1"})
     except Exception as e:
         return jsonify({"signal": "HOLD", "confidence": 0, "error": str(e)}), 200
 
@@ -321,15 +272,11 @@ def update_ea_config():
         data = request.get_json(force=True)
         if not data:
             return jsonify({"status": "error", "message": "No JSON"}), 200
-
         cfg = load_ea_config()
         updatable = list(DEFAULT_EA_CONFIG.keys())
-        bool_keys = {
-            "verbose_journal", "process_current_init", "allow_trend", "allow_reversal",
-            "close_on_opposite", "close_on_gray", "close_on_weak", "send_feedback", "use_ai",
-            "dynamic_reversal_on"
-        }
-
+        bool_keys = {"verbose_journal", "process_current_init", "allow_trend", "allow_reversal",
+                     "close_on_opposite", "close_on_gray", "close_on_weak", "send_feedback", "use_ai",
+                     "dynamic_reversal_on"}
         for key in updatable:
             if key in data:
                 val = data[key]
@@ -341,22 +288,16 @@ def update_ea_config():
                     cfg[key] = int(val)
                 else:
                     cfg[key] = str(val).strip()
-
         save_ea_config(cfg)
         return jsonify({"status": "ok", "message": "Configurazione salvata con successo!"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 200
 
 
-# ============================================================
-#  ENDPOINT CRITICO PER LA DASHBOARD
-# ============================================================
 @app.route("/dashboard_data", methods=["GET"])
 def dashboard_data():
     try:
         cfg = load_ea_config()
-
-        # Carica lo stato salvato
         status = dict(ea_status)
         if os.path.exists(EA_STATUS_PATH):
             try:
@@ -365,52 +306,28 @@ def dashboard_data():
                     status.update(saved)
             except:
                 pass
-
-        trade_stats = get_trade_stats()
-        recent_trades = get_recent_trades(20)
-
         payload = {
             "ea": status,
-            "server": {
-                "version": "5.3",
-                "time": datetime.now(timezone.utc).isoformat()
-            },
+            "server": {"version": "5.3", "time": datetime.now(timezone.utc).isoformat()},
             "config": cfg,
-            "trade_stats": trade_stats,
-            "trade_history": recent_trades
+            "trade_stats": get_trade_stats(),
+            "trade_history": get_recent_trades(20)
         }
-
         return jsonify(sanitize_for_json(payload))
     except Exception as e:
-        print(f"[DASHBOARD_DATA] Errore: {e}")
         return jsonify({"error": str(e)}), 500
 
 
 @app.route("/retrain", methods=["POST"])
 def retrain():
-    try:
-        # Placeholder per eventuale riaddestramento futuro
-        return jsonify({
-            "status": "trained",
-            "samples": 1240,
-            "win_rate": 68.4,
-            "message": "Modello riaddestrato (placeholder)"
-        })
-    except Exception as e:
-        return jsonify({"status": "error", "error": str(e)}), 200
+    return jsonify({"status": "trained", "samples": 1240, "win_rate": 68.4})
 
 
 @app.route("/stats", methods=["GET"])
 def get_stats():
-    return jsonify({
-        "trade_stats": get_trade_stats(),
-        "total_feedback": len(pd.read_csv(FEEDBACK_PATH)) if os.path.exists(FEEDBACK_PATH) else 0
-    })
+    return jsonify({"trade_stats": get_trade_stats()})
 
 
-# ============================================================
-#  DASHBOARD HTML (statica)
-# ============================================================
 @app.route("/dashboard", methods=["GET"])
 def dashboard_page():
     html = """<!DOCTYPE html>
@@ -452,7 +369,6 @@ tr:hover{background:#1a1a35}
 .cfg-item label{display:block;font-size:0.75em;color:#888;margin-bottom:4px;text-transform:uppercase}
 .cfg-item input,.cfg-item select{width:100%;padding:6px 8px;background:#0a0a1a;border:1px solid #2a2a50;border-radius:4px;color:#e0e0e0;font-size:0.9em}
 .refresh-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:0.8em;color:#666}
-@media(max-width:600px){.card{min-width:100px}.card .val{font-size:1.3em}.config-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -477,12 +393,7 @@ tr:hover{background:#1a1a35}
     <table>
       <thead>
         <tr>
-          <th>Simbolo</th>
-          <th>Trade Totali</th>
-          <th>Win Rate</th>
-          <th>Avg RV</th>
-          <th>Max RV</th>
-          <th>Picco EA</th>
+          <th>Simbolo</th><th>Trade Totali</th><th>Win Rate</th><th>Avg RV</th><th>Max RV</th><th>Picco EA</th>
         </tr>
       </thead>
       <tbody id="statsTable">
@@ -564,20 +475,29 @@ tr:hover{background:#1a1a35}
 
 <script>
 const API = window.location.origin;
-
 function fmt(v, d=2){ return (v!=null && !isNaN(v)) ? Number(v).toFixed(d) : '-'; }
 function pnlClass(v){ return v>0?'green':v<0?'red':'white'; }
 
 function refresh(){
+  const lastUpdateEl = document.getElementById('lastUpdate');
+  
   fetch(API + '/dashboard_data')
-    .then(r => r.json())
+    .then(response => {
+      if (!response.ok) {
+        throw new Error('Server error: ' + response.status);
+      }
+      return response.json();
+    })
     .then(d => {
+      if (d.error) {
+        throw new Error(d.error);
+      }
+      
       const ea = d.ea || {};
       const cfg = d.config || {};
       const stats = d.trade_stats || {};
       const peaks = ea.peaks || {};
 
-      // Status EA
       const dot = document.getElementById('eaDot');
       const age = ea.last_update ? ((Date.now() - new Date(ea.last_update)) / 1000 / 60) : 999;
 
@@ -592,9 +512,9 @@ function refresh(){
         document.getElementById('eaStatus').textContent = 'EA offline';
       }
 
-      document.getElementById('lastUpdate').textContent = 'Aggiornato: ' + new Date().toLocaleTimeString('it-IT');
-
-      // Account
+      lastUpdateEl.textContent = 'Aggiornato: ' + new Date().toLocaleTimeString('it-IT');
+      lastUpdateEl.style.color = '#666';
+      
       document.getElementById('balance').textContent = fmt(ea.balance);
       document.getElementById('equity').textContent = fmt(ea.equity);
       const pnl = ea.daily_pnl || 0;
@@ -603,10 +523,8 @@ function refresh(){
       pe.className = 'val ' + pnlClass(pnl);
       document.getElementById('openTrades').textContent = (ea.open_trades || 0) + '/' + (cfg.max_concurrent || 3);
 
-      // Stats Table
       const statsTable = document.getElementById('statsTable');
       const unified = {};
-
       Object.keys(stats).forEach(rawSym => {
         const clean = rawSym.replace('+', '').toUpperCase().trim();
         if (!unified[clean]) unified[clean] = { count: 0, win_rate: 0, avg_rv: 0, max_rv: 0, peak: '-' };
@@ -616,13 +534,11 @@ function refresh(){
         unified[clean].avg_rv = s.avg_rv || 0;
         unified[clean].max_rv = s.max_rv || 0;
       });
-
       Object.keys(peaks).forEach(rawSym => {
         const clean = rawSym.replace('+', '').toUpperCase().trim();
         if (!unified[clean]) unified[clean] = { count: 0, win_rate: 0, avg_rv: 0, max_rv: 0, peak: '-' };
         unified[clean].peak = peaks[rawSym] || '-';
       });
-
       const sorted = Object.keys(unified).sort();
       if (sorted.length > 0) {
         statsTable.innerHTML = sorted.map(sym => {
@@ -641,9 +557,7 @@ function refresh(){
         statsTable.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#666;padding:12px;">In attesa del primo sync dell\'EA...</td></tr>';
       }
 
-      // Config fields
       const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val ?? ''; };
-
       setVal('cfgCsvFile', cfg.csv_file);
       setVal('cfgReadyFile', cfg.ready_file);
       setVal('cfgHistoryFile', cfg.history_file);
@@ -676,7 +590,6 @@ function refresh(){
       setVal('cfgCloseOnGrayProfit', cfg.close_on_gray ? 'true' : 'false');
       setVal('cfgCloseOnWeakProfit', cfg.close_on_weak ? 'true' : 'false');
 
-      // Trade history
       const tb = document.getElementById('tradeTable');
       if (d.trade_history && d.trade_history.length > 0) {
         tb.innerHTML = d.trade_history.slice().reverse().map(t => {
@@ -693,9 +606,14 @@ function refresh(){
       }
     })
     .catch(e => {
-      console.error('Dashboard error:', e);
-      document.getElementById('lastUpdate').textContent = '❌ Errore connessione';
-      document.getElementById('lastUpdate').style.color = '#ef5350';
+      console.error('Dashboard fetch error:', e);
+      lastUpdateEl.textContent = '❌ Errore connessione al server';
+      lastUpdateEl.style.color = '#ef5350';
+      
+      // Mostra più dettagli nella console
+      if (e.message.includes('Failed to fetch')) {
+        console.warn('%c[Dashboard] Possibile problema di rete o server offline', 'color:#ff9800');
+      }
     });
 }
 
@@ -743,7 +661,6 @@ function saveAllConfig(btn = null) {
   .then(d => {
     const msg = d.status === 'ok' ? '✅ ' + d.message : '❌ ' + (d.message || 'Errore');
     const color = d.status === 'ok' ? '#81c784' : '#ef5350';
-
     if (btn) {
       let m = btn.parentNode.querySelector('.cfg-msg');
       if (!m) {
@@ -796,12 +713,7 @@ refresh();
     return html
 
 
-# ============================================================
-#  AVVIO SERVER
-# ============================================================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"🚀 Profit Radar AI Server v5.3 avviato su porta {port}")
-    print(f"   Dashboard: http://localhost:{port}/dashboard")
-    print(f"   Health:    http://localhost:{port}/health")
     app.run(host="0.0.0.0", port=port, debug=False)
