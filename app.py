@@ -823,6 +823,8 @@ details.section > :not(summary) {{
     <input type="number" id="cfgFridayLots" value="{cfg.get('friday_lots', 0.00)}" min="0.00" max="1.0" step="0.01"></div>
   <div class="cfg-item"><label>Lotto Pomeriggio<span class="tooltip"> ⓘ<span class="tooltiptext">Lotto usato nel pomeriggio. 0.00 = pomeriggio chiuso.</span></span></label>
     <input type="number" id="cfgAfternoonLots" value="{cfg.get('afternoon_lots', 0.00)}" min="0.00" max="1.0" step="0.01"></div>
+  <div class="cfg-item"><label>Lotto dyn lookback<span class="tooltip"> ⓘ<span class="tooltiptext">Trade passati per calcolare il win rate del lotto dinamico.</span></span></label>
+    <input type="number" id="cfgDynamicLookback" value="{cfg.get('dynamic_lookback', 20)}" min="5" max="100" step="1"></div>
 </div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
 
 <details class="section"><summary><h2>Filtri giorno e direzione</h2></summary>
@@ -949,8 +951,14 @@ details.section > :not(summary) {{
     <input type="number" id="cfgFriCloseProfitH" value="{cfg.get('fri_close_profit_h', 21)}" min="12" max="23" step="1"></div>
   <div class="cfg-item"><label>Ven chiudi perdita ora<span class="tooltip"> ⓘ<span class="tooltiptext">Ora del venerdì a cui chiudere i trade in perdita (es. 22).</span></span></label>
     <input type="number" id="cfgFriCloseLossH" value="{cfg.get('fri_close_loss_h', 22)}" min="12" max="23" step="1"></div>
+  <div class="cfg-item"><label>Ven chiudi perdita min<span class="tooltip"> ⓘ<span class="tooltiptext">Minuto dell'ora di chiusura in perdita.</span></span></label>
+    <input type="number" id="cfgFriCloseLossM" value="{cfg.get('fri_close_loss_m', 0)}" min="0" max="59" step="1"></div>
+  <div class="cfg-item"><label>Ven chiudi profitto min<span class="tooltip"> ⓘ<span class="tooltiptext">Minuto dell'ora di chiusura in profitto.</span></span></label>
+    <input type="number" id="cfgFriCloseProfitM" value="{cfg.get('fri_close_profit_m', 0)}" min="0" max="59" step="1"></div>
   <div class="cfg-item"><label>Ven forza chiusura ora<span class="tooltip"> ⓘ<span class="tooltiptext">Ora di chiusura forzata totale del venerdì sera (es. 23).</span></span></label>
     <input type="number" id="cfgFriForceCloseH" value="{cfg.get('fri_force_close_h', 23)}" min="12" max="23" step="1"></div>
+  <div class="cfg-item"><label>Ven forza chiusura min<span class="tooltip"> ⓘ<span class="tooltiptext">Minuto dell'ora di chiusura forzata totale.</span></span></label>
+    <input type="number" id="cfgFriForceCloseM" value="{cfg.get('fri_force_close_m', 0)}" min="0" max="59" step="1"></div>
 </div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
 
 <details class="section"><summary><h2>Dati, AI e log</h2></summary>
@@ -967,6 +975,22 @@ details.section > :not(summary) {{
     <input type="number" id="cfgAiTimeout" value="{cfg.get('ai_timeout', 5000)}" min="1000" max="30000" step="1000"></div>
   <div class="cfg-item"><label>Apri trade di test<span class="tooltip"> ⓘ<span class="tooltiptext">Se attivo, all'avvio apre un trade finto. Solo debug.</span></span></label>
     <select id="cfgTestTrade"><option value="true" {"selected" if cfg.get('test_trade') else ""}>Attivo</option><option value="false" {"" if cfg.get('test_trade') else "selected"}>Disattivo</option></select></div>
+  <div class="cfg-item"><label>Log AI dettagliato<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, l'EA stampa log di debug sul terminale di MT4.</span></span></label>
+    <select id="cfgAiLog"><option value="true" {"selected" if cfg.get('ai_log') else ""}>Attivo</option><option value="false" {"" if cfg.get('ai_log') else "selected"}>Disattivo</option></select></div>
+  <div class="cfg-item"><label>URL server AI<span class="tooltip"> ⓘ<span class="tooltiptext">L'indirizzo web del server AI.</span></span></label>
+    <input type="text" id="cfgAiUrl" value="{cfg.get('ai_url', 'https://profit-radar-ai.onrender.com/predict')}"></div>
+  <div class="cfg-item"><label>Export auto<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, l'EA esporta i dati in automatico ogni candela.</span></span></label>
+    <select id="cfgAutoExport"><option value="true" {"selected" if cfg.get('auto_export') else ""}>Attivo</option><option value="false" {"" if cfg.get('auto_export') else "selected"}>Disattivo</option></select></div>
+  <div class="cfg-item"><label>Fallback auto<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, passa a CSV in caso di errore dati live.</span></span></label>
+    <select id="cfgAutoFallback"><option value="true" {"selected" if cfg.get('auto_fallback') else ""}>Attivo</option><option value="false" {"" if cfg.get('auto_fallback') else "selected"}>Disattivo</option></select></div>
+  <div class="cfg-item"><label>N tentativi fallback<span class="tooltip"> ⓘ<span class="tooltiptext">Dopo quanti errori passa al CSV.</span></span></label>
+    <input type="number" id="cfgFallbackAfter" value="{cfg.get('fallback_after', 3)}" min="1" max="10" step="1"></div>
+  <div class="cfg-item"><label>Mostra pulsante<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, mostra il pulsante EXPORT DATA sul grafico MT4.</span></span></label>
+    <select id="cfgShowExportBtn"><option value="true" {"selected" if cfg.get('show_export_btn') else ""}>Attivo</option><option value="false" {"" if cfg.get('show_export_btn') else "selected"}>Disattivo</option></select></div>
+  <div class="cfg-item"><label>Esporta CSV<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, abilita l'esportazione CSV.</span></span></label>
+    <select id="cfgExportCsv"><option value="true" {"selected" if cfg.get('export_csv') else ""}>Attivo</option><option value="false" {"" if cfg.get('export_csv') else "selected"}>Disattivo</option></select></div>
+  <div class="cfg-item"><label>Tester<span class="tooltip"> ⓘ<span class="tooltiptext">Se ATTIVO, imposta l'EA per girare nello Strategy Tester.</span></span></label>
+    <select id="cfgStrategyTest"><option value="true" {"selected" if cfg.get('strategy_test') else ""}>Attivo</option><option value="false" {"" if cfg.get('strategy_test') else "selected"}>Disattivo</option></select></div>
 </div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
 
 <details class="section"><summary><h2>Tecnici e sicurezza</h2></summary>
@@ -1003,6 +1027,7 @@ details.section > :not(summary) {{
     <select id="cfgDashBg"><option value="true" {"selected" if cfg.get('dash_bg') else ""}>Attivo</option><option value="false" {"" if cfg.get('dash_bg') else "selected"}>Disattivo</option></select></div>
 </div><div class="btn-row" style="margin-top:15px"><button class="btn btn-blue" onclick="saveAllConfig(this)">💾 Salva Configurazione</button></div></details>
 
+<span id="cfgMsg" style="display:none"></span>
 <div class="section"><h2>Ultimi 20 Trade</h2>
 <div style="overflow-x:auto"><table>
 <thead><tr><th>Simbolo</th><th>Dir</th><th>Modulo</th><th>Pips</th><th>Profitto</th><th>Risultato</th><th>AI Conf</th></tr></thead>
