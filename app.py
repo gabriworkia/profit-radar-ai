@@ -716,4 +716,3 @@ refresh();
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"🚀 Profit Radar AI Server v5.3 avviato su porta {port}")
-    app.run(host="0.0.0.0", port=port, debug=False)
