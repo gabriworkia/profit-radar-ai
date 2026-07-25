@@ -1,8 +1,8 @@
 """
-Profit Radar Pro — Clean AI Server v5.1
+Profit Radar Pro — Clean AI Server v5.2
 =========================================
 Server Flask interamente riprogettato e riscritto da zero.
-Usa una struttura HTML statica (senza f-string) per escludere qualsiasi problema di escaping.
+Usa una struttura HTML statica pura (senza f-string) per escludere qualsiasi errore di escaping o runtime.
 Fornisce SOLO i parametri del nuovo EA "Executor" e i dati del "Data Collector".
 """
 
@@ -271,8 +271,8 @@ def update_ea_config():
 
 @app.route("/dashboard", methods=["GET"])
 def dashboard_page():
-    # USIAMO UNA STRINGA STATICA TRIPLE-QUOTED SENZA PREFISSO f 
-    # Questo esclude completamente qualsiasi errore di compilazione o escaping f-string!
+    # STRINGA HTML STATICA PURA (NESSUNA F-STRING!)
+    # Questo esclude qualsiasi possibile errore di parsing o runtime in Python.
     html = """<!DOCTYPE html>
 <html>
 <head>
