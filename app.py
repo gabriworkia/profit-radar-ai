@@ -479,9 +479,20 @@ function fmt(v, d=2){ return (v!=null && !isNaN(v)) ? Number(v).toFixed(d) : '-'
 function pnlClass(v){ return v>0?'green':v<0?'red':'white'; }
 
 function refresh(){
+  const lastUpdateEl = document.getElementById('lastUpdate');
+  
   fetch(API + '/dashboard_data')
-    .then(r => r.json())
+    .then(response => {
+      if (!response.ok) {
+        throw new Error('Server error: ' + response.status);
+      }
+      return response.json();
+    })
     .then(d => {
+      if (d.error) {
+        throw new Error(d.error);
+      }
+      
       const ea = d.ea || {};
       const cfg = d.config || {};
       const stats = d.trade_stats || {};
@@ -501,7 +512,9 @@ function refresh(){
         document.getElementById('eaStatus').textContent = 'EA offline';
       }
 
-      document.getElementById('lastUpdate').textContent = 'Aggiornato: ' + new Date().toLocaleTimeString('it-IT');
+      lastUpdateEl.textContent = 'Aggiornato: ' + new Date().toLocaleTimeString('it-IT');
+      lastUpdateEl.style.color = '#666';
+      
       document.getElementById('balance').textContent = fmt(ea.balance);
       document.getElementById('equity').textContent = fmt(ea.equity);
       const pnl = ea.daily_pnl || 0;
@@ -541,7 +554,7 @@ function refresh(){
           </tr>`;
         }).join('');
       } else {
-        statsTable.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#666;padding:12px;">In attesa del primo sync dell\\'EA...</td></tr>';
+        statsTable.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#666;padding:12px;">In attesa del primo sync dell\'EA...</td></tr>';
       }
 
       const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val ?? ''; };
@@ -593,9 +606,14 @@ function refresh(){
       }
     })
     .catch(e => {
-      console.error('Dashboard error:', e);
-      document.getElementById('lastUpdate').textContent = '❌ Errore connessione';
-      document.getElementById('lastUpdate').style.color = '#ef5350';
+      console.error('Dashboard fetch error:', e);
+      lastUpdateEl.textContent = '❌ Errore connessione al server';
+      lastUpdateEl.style.color = '#ef5350';
+      
+      // Mostra più dettagli nella console
+      if (e.message.includes('Failed to fetch')) {
+        console.warn('%c[Dashboard] Possibile problema di rete o server offline', 'color:#ff9800');
+      }
     });
 }
 
