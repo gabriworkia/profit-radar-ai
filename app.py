@@ -6,6 +6,15 @@ Include tutti gli endpoint mancanti e la sincronizzazione dati dashboard.
 """
 
 import os
+import json
+import logging
+import traceback
+import numpy as np
+import pandas as pd
+from datetime import datetime, timezone
+from flask import Flask, request, jsonify, Response
+from flask_cors import CORS
+
 # ============================================================
 #  CONFIGURAZIONE PATH
 # ============================================================
@@ -106,6 +115,14 @@ ea_status = {
 }
 
 # ============================================================
+#  FUNZIONI UTILI
+# ============================================================
+def load_ea_config():
+    if os.path.exists(EA_CONFIG_PATH):
+        try:
+            with open(EA_CONFIG_PATH, "r") as f:
+                cfg = json.load(f)
+            for k, v in DEFAULT_EA_CONFIG.items():
                 if k not in cfg:
                     cfg[k] = v
             return cfg
@@ -122,6 +139,19 @@ def save_ea_config(cfg):
 def sanitize_for_json(obj):
     if isinstance(obj, dict):
         return {k: sanitize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [sanitize_for_json(v) for v in obj]
+    elif isinstance(obj, float):
+        if np.isnan(obj) or np.isinf(obj):
+            return None
+        return obj
+    elif isinstance(obj, (np.integer,)):
+        return int(obj)
+    elif isinstance(obj, (np.floating,)):
+        if np.isnan(obj) or np.isinf(obj):
+            return None
+        return float(obj)
+    elif isinstance(obj, np.bool_):
         return bool(obj)
     return obj
 
@@ -198,6 +228,8 @@ def health():
 @app.route("/ea_status", methods=["POST"])
 def receive_ea_status():
     global ea_status
+    try:
+        data = request.get_json(force=True)
         if not data:
             return jsonify({"status": "error", "message": "No JSON"}), 200
 
@@ -223,6 +255,14 @@ def receive_ea_status():
         return jsonify({"status": "error", "message": str(e)}), 200
 
 
+@app.route("/feedback", methods=["POST"])
+def receive_feedback():
+    try:
+        data = request.get_json(force=True)
+        if not data:
+            return jsonify({"status": "error", "message": "No JSON"}), 200
+
+        new_row = pd.DataFrame([data])
         header_needed = not os.path.exists(FEEDBACK_PATH)
         new_row.to_csv(FEEDBACK_PATH, mode="a", header=header_needed, index=False)
 
@@ -230,6 +270,12 @@ def receive_ea_status():
         return jsonify({"status": "ok", "total_feedback": total_fb})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 200
+
+
+@app.route("/predict", methods=["POST"])
+def predict():
+    try:
+        data = request.get_json(force=True)
         if not data:
             return jsonify({"signal": "HOLD", "confidence": 0}), 200
 
@@ -264,6 +310,18 @@ def receive_ea_status():
         return jsonify({"signal": "HOLD", "confidence": 0, "error": str(e)}), 200
 
 
+@app.route("/ea_config", methods=["GET"])
+def get_ea_config():
+    return jsonify(load_ea_config())
+
+
+@app.route("/ea_config", methods=["POST"])
+def update_ea_config():
+    try:
+        data = request.get_json(force=True)
+        if not data:
+            return jsonify({"status": "error", "message": "No JSON"}), 200
+
         cfg = load_ea_config()
         updatable = list(DEFAULT_EA_CONFIG.keys())
         bool_keys = {
@@ -283,6 +341,10 @@ def receive_ea_status():
                     cfg[key] = int(val)
                 else:
                     cfg[key] = str(val).strip()
+
+        save_ea_config(cfg)
+        return jsonify({"status": "ok", "message": "Configurazione salvata con successo!"})
+    except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 200
 
 
@@ -354,6 +416,9 @@ def dashboard_page():
     html = """<!DOCTYPE html>
 <html>
 <head>
+<title>Radar Executor Dashboard</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'Segoe UI',system-ui,sans-serif;background:#0a0a1a;color:#e0e0e0;min-height:100vh}
@@ -361,6 +426,22 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#0a0a1a;color:#e0e0e
 h1{text-align:center;font-size:1.3em;padding:12px 0;color:#4fc3f7;border-bottom:1px solid #1a1a3a;margin-bottom:10px}
 h1 span{color:#81c784}
 .section{background:#12122a;border-radius:10px;padding:14px;margin-bottom:12px;border:1px solid #1e1e40}
+.section h2{font-size:0.95em;color:#4fc3f7;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.section h2::before{content:'';width:4px;height:16px;background:#4fc3f7;border-radius:2px}
+.row{display:flex;flex-wrap:wrap;gap:8px}
+.card{flex:1;min-width:140px;background:#1a1a35;border-radius:8px;padding:10px;text-align:center}
+.card .val{font-size:1.6em;font-weight:700;line-height:1.3}
+.card .lbl{font-size:0.7em;color:#888;text-transform:uppercase;margin-top:2px}
+.green{color:#81c784}.red{color:#ef5350}.yellow{color:#ffd54f}.blue{color:#4fc3f7}.white{color:#e0e0e0}
+.status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+.dot-green{background:#81c784;box-shadow:0 0 6px #81c784}
+.dot-red{background:#ef5350;box-shadow:0 0 6px #ef5350}
+.dot-yellow{background:#ffd54f;box-shadow:0 0 6px #ffd54f}
+.dot-gray{background:#666}
+table{width:100%;border-collapse:collapse;font-size:0.78em}
+th{text-align:left;padding:6px 8px;background:#1a1a35;color:#888;text-transform:uppercase;font-size:0.85em;border-bottom:1px solid #2a2a50}
+td{padding:5px 8px;border-bottom:1px solid #15152a}
+tr:hover{background:#1a1a35}
 .btn{display:inline-block;padding:8px 16px;border:none;border-radius:6px;cursor:pointer;font-size:0.85em;font-weight:600;transition:all .2s}
 .btn:hover{transform:translateY(-1px);opacity:0.9}
 .btn-blue{background:#1565c0;color:#fff}
@@ -368,12 +449,26 @@ h1 span{color:#81c784}
 .btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
 .config-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-top:8px}
 .cfg-item{background:#1a1a35;border-radius:6px;padding:10px}
+.cfg-item label{display:block;font-size:0.75em;color:#888;margin-bottom:4px;text-transform:uppercase}
 .cfg-item input,.cfg-item select{width:100%;padding:6px 8px;background:#0a0a1a;border:1px solid #2a2a50;border-radius:4px;color:#e0e0e0;font-size:0.9em}
 .refresh-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:0.8em;color:#666}
 @media(max-width:600px){.card{min-width:100px}.card .val{font-size:1.3em}.config-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
+<div class="container">
+<h1>📡 Profit Radar <span>Pro</span> — Executor Dashboard</h1>
+
+<div class="refresh-bar">
+  <span id="lastUpdate">Caricamento...</span>
+  <span><span class="status-dot dot-gray" id="eaDot"></span><span id="eaStatus">-</span></span>
+</div>
+
+<div class="section"><h2>Account Live (dal Collettore)</h2>
+<div class="row">
+  <div class="card"><div class="val white" id="balance">-</div><div class="lbl">Balance EUR</div></div>
+  <div class="card"><div class="val white" id="equity">-</div><div class="lbl">Equity EUR</div></div>
+  <div class="card"><div class="val" id="dailyPnl">-</div><div class="lbl">P&L Oggi</div></div>
   <div class="card"><div class="val" id="openTrades">-</div><div class="lbl">Trade Aperti</div></div>
 </div></div>
 
@@ -381,6 +476,7 @@ h1 span{color:#81c784}
   <div style="overflow-y:auto; max-height: 250px; border: 1px solid #1e1e40; border-radius: 6px;">
     <table>
       <thead>
+        <tr>
           <th>Simbolo</th>
           <th>Trade Totali</th>
           <th>Win Rate</th>
@@ -390,6 +486,9 @@ h1 span{color:#81c784}
         </tr>
       </thead>
       <tbody id="statsTable">
+        <tr><td colspan="6" style="text-align:center;color:#666;padding:12px;">In attesa dei dati dall'EA...</td></tr>
+      </tbody>
+    </table>
   </div>
 </div>
 
@@ -451,6 +550,11 @@ h1 span{color:#81c784}
 </table></div></div>
 
 <div class="section"><h2>Azioni</h2>
+<div class="btn-row">
+  <button class="btn btn-green" onclick="retrain()">🔄 Riaddestra</button>
+  <button class="btn btn-blue" onclick="refresh()">🔃 Aggiorna</button>
+</div>
+<div id="actionMsg" style="margin-top:8px;font-size:0.8em;color:#ffd54f"></div>
 </div>
 
 <div style="text-align:center;padding:16px 0;font-size:0.7em;color:#444">
