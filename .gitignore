@@ -5,3 +5,9 @@ data/
 *.pkl
 *.csv
 .venv/
+
+# Stato runtime generato dal server (non versionare)
+Data/ea_status.json
+Data/ea_config.json
+Data/*.tmp
+Data/*.bak
