@@ -7,7 +7,9 @@ Include tutti gli endpoint mancanti e la sincronizzazione dati dashboard.
 
 import os
 import json
+import time
 import threading
+import urllib.request
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone
@@ -148,6 +150,16 @@ def save_ea_config(cfg):
         os.replace(tmp, EA_CONFIG_PATH)  # scrittura atomica
 
 
+def config_fingerprint():
+    """Hash breve della config: se cambia, l'EA sa che deve rileggerla."""
+    try:
+        import hashlib
+        raw = json.dumps(load_ea_config(), sort_keys=True).encode("utf-8")
+        return hashlib.md5(raw).hexdigest()[:8]
+    except Exception:
+        return ""
+
+
 def load_ea_status():
     """Stato EA da disco, con fallback ai default (sopravvive ai restart)."""
     status = dict(DEFAULT_EA_STATUS)
@@ -262,13 +274,46 @@ def migrate_feedback_file():
 
 
 def read_trade_log():
-    """Legge PRP_TradeLog.csv (separatore ';') in modo tollerante."""
+    """
+    Legge PRP_TradeLog.csv (separatore ';') in modo tollerante.
+
+    FIX: l'EA scrive un campo 'Comment' finale (es. "PRP_STD_...[sl]") che NON
+    e' dichiarato nell'header. Risultato: 171 righe su 225 avevano 21 campi
+    invece di 20 e venivano SCARTATE da on_bad_lines="skip" -> in dashboard
+    arrivava solo il 24% dei trade.
+    Ora l'header viene esteso dinamicamente alle colonne realmente presenti.
+    """
     if not os.path.exists(TRADE_LOG_PATH):
         return None
     try:
-        df = pd.read_csv(TRADE_LOG_PATH, sep=";", on_bad_lines="skip",
-                         encoding="utf-8", encoding_errors="replace")
+        with open(TRADE_LOG_PATH, "r", encoding="utf-8", errors="replace") as f:
+            header = f.readline().strip().lstrip("\ufeff")
+            # Numero massimo di campi presenti nel file (righe con extra)
+            max_fields = len(header.split(";"))
+            for line in f:
+                line = line.strip()
+                if line:
+                    max_fields = max(max_fields, len(line.split(";")))
+
+        names = [c.strip() for c in header.split(";")]
+        # Nomi per le colonne extra non dichiarate nell'header
+        extra = max_fields - len(names)
+        if extra > 0:
+            names += (["comment"] if extra == 1
+                      else [f"extra_{i+1}" for i in range(extra)])
+
+        # header=None + skiprows=1: 'names' ha piu' colonne dell'header reale,
+        # quindi la prima riga va saltata manualmente.
+        df = pd.read_csv(
+            TRADE_LOG_PATH, sep=";", header=None, names=names, skiprows=1,
+            on_bad_lines="skip", encoding="utf-8", encoding_errors="replace",
+            engine="python",
+        )
         df.columns = [str(c).strip().lower().replace("%", "_pct") for c in df.columns]
+        # L'EA scrive righe con terminatore \r\n: ripulisce i valori testuali
+        for col in df.columns:
+            if df[col].dtype == object:
+                df[col] = df[col].astype(str).str.strip().str.strip("\r")
         return df
     except Exception as e:
         print(f"[TRADELOG] Errore lettura: {e}")
@@ -431,6 +476,78 @@ def get_recent_trades(limit=20):
 
 
 # ============================================================
+#  KEEP-ALIVE / ANTI-SLEEP (Render free tier)
+# ============================================================
+# Render spegne i servizi free dopo ~15 min senza traffico in ingresso e il
+# risveglio richiede 30-60s: nel frattempo l'EA riceve errori WebRequest e i
+# feedback vengono persi. Difesa a 3 livelli:
+#   1) self-ping interno (qui sotto): funziona SEMPRE, anche a MT4 spento
+#   2) heartbeat dell'EA (endpoint /ping, leggerissimo)
+#   3) cron esterno GitHub Actions (vedi .github/workflows/keep-alive.yml)
+
+KEEPALIVE_ENABLED = os.environ.get("KEEPALIVE", "1").lower() not in ("0", "false", "no")
+# 12 min < 15 min di soglia Render, con margine di sicurezza.
+KEEPALIVE_INTERVAL = int(os.environ.get("KEEPALIVE_INTERVAL", "720"))
+# Su Render RENDER_EXTERNAL_URL e' iniettata automaticamente.
+SELF_URL = (os.environ.get("RENDER_EXTERNAL_URL")
+            or os.environ.get("SELF_URL")
+            or "https://profit-radar-ai.onrender.com").rstrip("/")
+
+keepalive_stats = {
+    "enabled": KEEPALIVE_ENABLED,
+    "interval_seconds": KEEPALIVE_INTERVAL,
+    "target": SELF_URL,
+    "self_ping_ok": 0,
+    "self_ping_fail": 0,
+    "last_self_ping": None,
+    "last_error": None,
+    "ea_pings": 0,
+    "last_ea_ping": None,
+    "external_pings": 0,
+    "last_external_ping": None,
+    "started_at": None,
+}
+
+
+def _self_ping_once():
+    """GET /health su se stesso: genera traffico in ingresso reale."""
+    url = f"{SELF_URL}/health"
+    req = urllib.request.Request(
+        url, headers={"User-Agent": "profit-radar-keepalive/1.0"}
+    )
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return r.status
+
+
+def _keepalive_loop():
+    # Primo ping ritardato: al boot il servizio e' gia' sveglio.
+    time.sleep(min(KEEPALIVE_INTERVAL, 60))
+    while True:
+        try:
+            code = _self_ping_once()
+            keepalive_stats["self_ping_ok"] += 1
+            keepalive_stats["last_self_ping"] = datetime.now(timezone.utc).isoformat()
+            keepalive_stats["last_error"] = None
+            print(f"[KEEPALIVE] self-ping {code} ({keepalive_stats['self_ping_ok']} ok)")
+        except Exception as e:
+            keepalive_stats["self_ping_fail"] += 1
+            keepalive_stats["last_error"] = str(e)
+            print(f"[KEEPALIVE] self-ping FALLITO: {e}")
+        time.sleep(KEEPALIVE_INTERVAL)
+
+
+def start_keepalive():
+    if not KEEPALIVE_ENABLED:
+        print("[KEEPALIVE] disattivato (KEEPALIVE=0)")
+        return
+    # daemon=True: non blocca lo shutdown del worker gunicorn.
+    t = threading.Thread(target=_keepalive_loop, name="keepalive", daemon=True)
+    t.start()
+    keepalive_stats["started_at"] = datetime.now(timezone.utc).isoformat()
+    print(f"[KEEPALIVE] attivo: {SELF_URL}/health ogni {KEEPALIVE_INTERVAL}s")
+
+
+# ============================================================
 #  ENDPOINTS
 # ============================================================
 
@@ -447,11 +564,68 @@ def favicon():
 
 @app.route("/health", methods=["GET", "HEAD"])
 def health():
+    src = request.args.get("src", "")
+    now = datetime.now(timezone.utc).isoformat()
+    if src == "ea":
+        keepalive_stats["ea_pings"] += 1
+        keepalive_stats["last_ea_ping"] = now
+    elif src in ("cron", "external", "uptime"):
+        keepalive_stats["external_pings"] += 1
+        keepalive_stats["last_external_ping"] = now
     return jsonify({
         "status": "ok",
         "version": SERVER_VERSION,
-        "time": datetime.now(timezone.utc).isoformat(),
+        "time": now,
     })
+
+
+@app.route("/ping", methods=["GET", "HEAD", "POST"])
+def ping():
+    """
+    Heartbeat ultraleggero per l'EA: nessun accesso a disco, risposta minima.
+    L'EA lo chiama ogni 1-2 minuti per tenere sveglio Render anche quando non
+    ci sono trade da sincronizzare.
+    """
+    now = datetime.now(timezone.utc)
+    keepalive_stats["ea_pings"] += 1
+    keepalive_stats["last_ea_ping"] = now.isoformat()
+
+    status = load_ea_status()
+    return jsonify({
+        "status": "ok",
+        "pong": True,
+        "server_time": now.isoformat(),
+        "awake": True,
+        # L'EA puo' accorgersi di un cambio config senza scaricarla ogni volta.
+        "config_version": config_fingerprint(),
+        "ea_last_update": status.get("last_update"),
+    })
+
+
+def keepalive_snapshot():
+    """Stato keep-alive con le eta' calcolate lato server."""
+    data = dict(keepalive_stats)
+    for key, age_key in (("last_self_ping", "self_ping_age_s"),
+                         ("last_ea_ping", "ea_ping_age_s"),
+                         ("last_external_ping", "external_ping_age_s")):
+        val = data.get(key)
+        age = None
+        if val:
+            try:
+                dt = datetime.fromisoformat(str(val))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                age = round((datetime.now(timezone.utc) - dt).total_seconds(), 1)
+            except Exception:
+                age = None
+        data[age_key] = age
+    return data
+
+
+@app.route("/keepalive_status", methods=["GET"])
+def keepalive_status():
+    """Diagnostica: chi sta tenendo sveglio il server e da quanto."""
+    return jsonify(sanitize_for_json(keepalive_snapshot()))
 
 
 @app.route("/ea_status", methods=["POST", "GET"])
@@ -639,7 +813,8 @@ def dashboard_data():
             "server": {"version": SERVER_VERSION, "time": datetime.now(timezone.utc).isoformat()},
             "config": cfg,
             "trade_stats": get_trade_stats(),
-            "trade_history": get_recent_trades(20)
+            "trade_history": get_recent_trades(20),
+            "keepalive": keepalive_snapshot(),
         }
         return jsonify(sanitize_for_json(payload))
     except Exception as e:
@@ -717,6 +892,15 @@ tr:hover{background:#1a1a35}
   <div class="card"><div class="val" id="dailyPnl">-</div><div class="lbl">P&L Oggi</div></div>
   <div class="card"><div class="val" id="openTrades">-</div><div class="lbl">Trade Aperti</div></div>
 </div></div>
+
+<div class="section"><h2>🔌 Keep-Alive Render (anti sleep-mode)</h2>
+<div class="row">
+  <div class="card"><div class="val" id="kaEa">-</div><div class="lbl">Ping EA</div></div>
+  <div class="card"><div class="val" id="kaSelf">-</div><div class="lbl">Self-ping server</div></div>
+  <div class="card"><div class="val" id="kaCron">-</div><div class="lbl">Cron esterno</div></div>
+  <div class="card"><div class="val" id="kaLast">-</div><div class="lbl">Ultimo ping EA</div></div>
+</div>
+<div id="kaWarn" style="margin-top:8px;font-size:0.78em;color:#888"></div></div>
 
 <div class="section"><h2>📊 Analisi Picchi e Statistiche Cross</h2>
   <div style="overflow-y:auto; max-height: 250px; border: 1px solid #1e1e40; border-radius: 6px;">
@@ -861,6 +1045,38 @@ function refresh(){
       pe.textContent = (pnl >= 0 ? '+' : '') + fmt(pnl);
       pe.className = 'val ' + pnlClass(pnl);
       document.getElementById('openTrades').textContent = (ea.open_trades || 0) + '/' + (cfg.max_concurrent || 3);
+
+      const ka = d.keepalive || {};
+      const setTxt = (id, v, cls) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = v;
+        if (cls) el.className = 'val ' + cls;
+      };
+      setTxt('kaEa', ka.ea_pings != null ? ka.ea_pings : '-', 'blue');
+      setTxt('kaSelf', ka.self_ping_ok != null ? ka.self_ping_ok : '-', 'blue');
+      setTxt('kaCron', ka.external_pings != null ? ka.external_pings : '-', 'blue');
+      const eaAge = ka.ea_ping_age_s;
+      if (eaAge == null) {
+        setTxt('kaLast', 'mai', 'yellow');
+      } else if (eaAge < 300) {
+        setTxt('kaLast', Math.round(eaAge) + 's fa', 'green');
+      } else {
+        setTxt('kaLast', Math.round(eaAge / 60) + 'm fa', 'red');
+      }
+      const warn = document.getElementById('kaWarn');
+      if (warn) {
+        if (eaAge == null) {
+          warn.innerHTML = "⚠️ Nessun ping dall'EA. Verifica <b>InpKeepAliveOn=true</b> e che l'URL <b>/ping</b> sia nella whitelist MT4 (errore 4014).";
+          warn.style.color = '#ffd54f';
+        } else if (eaAge > 300) {
+          warn.textContent = "⚠️ L'EA non pinga da oltre 5 minuti: MT4 spento o WebRequest bloccata.";
+          warn.style.color = '#ef5350';
+        } else {
+          warn.textContent = '✅ Server tenuto sveglio correttamente. Render dorme dopo 15 min di inattività.';
+          warn.style.color = '#81c784';
+        }
+      }
 
       const statsTable = document.getElementById('statsTable');
       const unified = {};
@@ -1067,6 +1283,7 @@ def startup():
     print(f"[INIT] TradeLog: {'OK' if os.path.exists(TRADE_LOG_PATH) else 'assente'} | "
           f"Feedback: {count_csv_rows(FEEDBACK_PATH)} righe")
     print(f"[INIT] Ultimo sync EA: {ea_status.get('last_update') or 'mai'}")
+    start_keepalive()
 
 
 startup()

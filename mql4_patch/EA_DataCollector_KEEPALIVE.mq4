@@ -1,0 +1,1499 @@
+//+------------------------------------------------------------------+
+//|                         ProfitRadarPro_DataCollector_EA.mq4       |
+//| EA #1 - Data Collector affidabile                                |
+//|                                                                  |
+//| Legge il pannello del Profit Radar, valida LONG/SHORT via        |
+//| iCustom sulla candela M15 CHIUSA (shift 1) e salva:              |
+//| - storico completo                                               |
+//| - ultima snapshot valida                                          |
+//| - file READY per l'EA #2                                         |
+//|                                                                  |
+//| Nessun trade. Nessuna grafica sul grafico.                       |
+//+------------------------------------------------------------------+
+#property strict
+#property version   "2.00"
+#property description "EA #1 - Data Collector affidabile, senza grafica"
+#property description "Usa SOLO candela M15 chiusa (shift 1)"
+#property description "Scrive History + Latest + Ready, nessun trade"
+
+//====================================================================
+// INPUT
+//====================================================================
+extern string InpHistoryFile        = "PRP_TrustedHistory.csv";
+extern string InpFeedbackFile       = "PRP_FeedbackSent.csv";
+extern string InpAIUrl              = "https://profit-radar-ai.onrender.com/predict";
+extern bool   InpSendFeedback       = true;
+extern bool   InpUseAI              = true;
+extern int    InpAIMinConf          = 70;
+extern int    InpExecutorMagic      = 270202; //--- Il Magic Number dell'Executor EA da monitorare
+extern string InpLatestFile         = "PRP_TrustedLatest.csv";
+extern string InpReadyFile          = "PRP_TrustedReady.csv";
+extern bool   InpWriteLatestHTML    = true;
+extern string InpLatestHTMLFile     = "PRP_TrustedLatest.html";
+extern string InpRadarIndicator     = "THE_PROFIT_RADAR_PRO_by_ULTIMA_MARKETS_v2_7";
+extern int    InpTimerSeconds       = 10;
+
+//--- KEEP-ALIVE RENDER (anti sleep-mode)
+extern bool   InpKeepAliveOn        = true;  //--- Tiene sveglio il server Render 24/7
+extern int    InpKeepAliveSeconds   = 120;   //--- Ping ogni 2 minuti (soglia Render: 15 min)
+extern int    InpKeepAliveTimeout   = 60000; //--- 60s: copre il cold start di Render
+extern bool   InpCaptureAtInit      = true;
+extern bool   InpVerboseJournal     = true;
+extern int    InpExpectedRows       = 28;
+extern int    InpMaxRowsToScan      = 40;
+
+extern string InpPairPrefix         = "RadarPair_";
+extern string InpSignalPrefix       = "RadarSignal_";
+extern string InpADRPrefix          = "RadarADR_";
+extern string InpRXPrefix           = "RadarRX_";
+
+#define MAX_ROWS 100
+
+//====================================================================
+// STATO GLOBALE
+//====================================================================
+datetime g_lastReadyBar      = 0;
+datetime g_lastCaptureTime   = 0;
+int      g_totalReadySnaps   = 0;
+int      g_lastRowsCollected = 0;
+int      g_lastInvalidRows   = 0;
+int      g_lastICustomCalls  = 0;
+string   g_lastStatus        = "INIT";
+string   g_lastReason        = "";
+string   g_lastError         = "";
+
+//--- Feedback & Server Sync Tracking
+datetime g_fbLastTimeScan     = 0;
+int      g_syncCounter        = 0;
+int      g_syncInterval       = 300;  // 5 minuti
+datetime g_lastSyncTime       = 0;
+int      g_warmupCounter      = 0;
+//--- Keep-alive tracking
+int      g_kaCounter          = 0;
+int      g_kaTotalOK          = 0;
+int      g_kaTotalFail        = 0;
+datetime g_kaLastOK           = 0;
+string   g_kaConfigVersion    = "";
+int      g_warmupInterval     = 300;  // 5 minuti
+bool     g_warmupOK           = false;
+datetime g_warmupLastTime     = 0;
+int      g_warmupTotalOK      = 0;
+int      g_warmupTotalFail    = 0;
+int      g_aiCalls            = 0;
+int      g_aiConfirm          = 0;
+int      g_aiReject           = 0;
+int      g_aiErrors           = 0;
+int      g_aiMissedTrades     = 0;
+
+//====================================================================
+// SNAPSHOT BUFFERS
+//====================================================================
+int      g_snapCount = 0;
+string   g_snapPairCore[MAX_ROWS];
+string   g_snapBrokerSym[MAX_ROWS];
+double   g_snapOpen[MAX_ROWS];
+double   g_snapHigh[MAX_ROWS];
+double   g_snapLow[MAX_ROWS];
+double   g_snapClose[MAX_ROWS];
+double   g_snapEMA21[MAX_ROWS];
+double   g_snapEMA200[MAX_ROWS];
+double   g_snapEMADistPips[MAX_ROWS];
+string   g_snapScreenType[MAX_ROWS];
+double   g_snapScreenValue[MAX_ROWS];
+string   g_snapFinalState[MAX_ROWS];
+double   g_snapFinalValue[MAX_ROWS];
+double   g_snapADRDone[MAX_ROWS];
+double   g_snapADRAvg[MAX_ROWS];
+double   g_snapADRPct[MAX_ROWS];
+string   g_snapRXType[MAX_ROWS];
+int      g_snapRXAge[MAX_ROWS];
+string   g_snapStateSource[MAX_ROWS];
+bool     g_snapValid[MAX_ROWS];
+string   g_snapInvalidReason[MAX_ROWS];
+
+//====================================================================
+// FORWARD DECLARATIONS
+//====================================================================
+void     CaptureSnapshot(bool forceTry);
+void     CheckClosedTradesFeedback();
+void     SyncWithServer();
+void     KeepAlivePing();
+string   JsonGetString(string json, string key);
+void     AIWarmupPing();
+void     RecoverMissedFeedback();
+bool     SendSingleFeedback(int ticket, string sym, string dir, double openP, double closeP, datetime openT, datetime closeT, double profit, double pips, string comment);
+bool     FeedbackAlreadySent(int ticket);
+void     MarkFeedbackSent(int ticket);
+string   BuildFeedbackJSON(int ticket, string sym, string dir, double profit, double pips, string comment, string &fields[]);
+string   AICallFeedback(string json);
+string   ErrDesc(int err);
+datetime LoadLastReadyBar();
+bool     CollectTrustedSnapshot(int &invalidRows);
+bool     EnsureHistoryHeader();
+void     WriteSnapshotHeader(int handle);
+bool     WriteLatestSnapshot(datetime captureTime, datetime closedBarTime);
+bool     AppendHistorySnapshot(datetime captureTime, datetime closedBarTime);
+bool     WriteReadyMeta(datetime updateTime, datetime candidateBar, datetime lastReadyBar, int rowsWritten, string status, string reason);
+bool     WriteLatestHTML(datetime captureTime, datetime closedBarTime);
+string   SafeObjText(string objName);
+string   TrimStr(string s);
+string   NormalizePairCore(string s);
+string   ChartSuffix();
+string   ResolveBrokerSymbol(string pairCore);
+double   GetPipSize(string sym);
+string   StateColorHex(string state);
+void     ParseSignalText(string s, string &screenType, string &screenClass, double &screenValue);
+void     ParseADRText(string s, double &done, double &avg, double &pct);
+void     ParseRXText(string s, string &rxType, int &rxAge);
+string   ExtractFirstNumberToken(string s);
+int      ExtractFirstInt(string s);
+void     ReadRadarShift1(string brokerSym,
+                         double &buf0, double &buf1, double &buf2, double &buf3, double &buf4,
+                         string &state, double &value, int &allZeroFlag);
+string   TFToString(int tf);
+
+//+------------------------------------------------------------------+
+//| INIT                                                             |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   if(InpMaxRowsToScan < 1) InpMaxRowsToScan = 1;
+   if(InpMaxRowsToScan > MAX_ROWS) InpMaxRowsToScan = MAX_ROWS;
+   if(InpExpectedRows < 1) InpExpectedRows = 1;
+   if(InpExpectedRows > MAX_ROWS) InpExpectedRows = MAX_ROWS;
+   if(InpTimerSeconds < 1) InpTimerSeconds = 1;
+
+   g_lastReadyBar = LoadLastReadyBar();
+
+   EnsureHistoryHeader();
+   WriteReadyMeta(TimeCurrent(), 0, g_lastReadyBar, 0, "INIT", "startup");
+
+   EventSetTimer(InpTimerSeconds);
+
+   if(InpVerboseJournal)
+   {
+      Print("[COLLECTOR] Avviato su ", Symbol(), " ", TFToString(Period()));
+      Print("[COLLECTOR] History: MQL4/Files/", InpHistoryFile);
+      Print("[COLLECTOR] Latest : MQL4/Files/", InpLatestFile);
+      Print("[COLLECTOR] Ready  : MQL4/Files/", InpReadyFile);
+      if(InpWriteLatestHTML)
+         Print("[COLLECTOR] HTML   : MQL4/Files/", InpLatestHTMLFile);
+      Print("[COLLECTOR] Indicatore: ", InpRadarIndicator);
+      Print("[COLLECTOR] Candela usata: M15 shift 1 (chiusa)");
+      Print("[COLLECTOR] Ultima barra READY caricata: ",
+            (g_lastReadyBar > 0 ? TimeToString(g_lastReadyBar, TIME_DATE | TIME_MINUTES) : "nessuna"));
+   }
+
+   if(InpCaptureAtInit)
+      CaptureSnapshot(true);
+
+   //--- Sveglia subito Render all'avvio (potrebbe essere in sleep)
+   if(InpKeepAliveOn)
+   {
+      Print("[KEEPALIVE] Risveglio iniziale del server...");
+      KeepAlivePing();
+   }
+
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| DEINIT                                                           |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   EventKillTimer();
+}
+
+//+------------------------------------------------------------------+
+//| TIMER                                                            |
+//+------------------------------------------------------------------+
+void OnTimer()
+{
+   CaptureSnapshot(false);
+
+   //--- Sincronizzazione ed invio feedback in background ogni 1 minuto (Timer a 60 secondi)
+   //    Così il Data Collector fa da 'Ponte Web' per tutta la nuova architettura!
+   //--- KEEP-ALIVE: fuori da InpSendFeedback, gira SEMPRE (anti sleep Render)
+   if(InpKeepAliveOn)
+   {
+      g_kaCounter += InpTimerSeconds;
+      if(g_kaCounter >= InpKeepAliveSeconds)
+      {
+         g_kaCounter = 0;
+         KeepAlivePing();
+      }
+   }
+
+   if(InpSendFeedback)
+   {
+      CheckClosedTradesFeedback();
+      RecoverMissedFeedback();
+
+      g_warmupCounter += InpTimerSeconds;
+      if(g_warmupCounter >= g_warmupInterval)
+      {
+         g_warmupCounter = 0;
+         AIWarmupPing();
+      }
+
+      g_syncCounter += InpTimerSeconds;
+      if(g_syncCounter >= g_syncInterval)
+      {
+         g_syncCounter = 0;
+         SyncWithServer();
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| LOAD LAST READY BAR                                              |
+//+------------------------------------------------------------------+
+datetime LoadLastReadyBar()
+{
+   int h = FileOpen(InpReadyFile, FILE_CSV | FILE_READ | FILE_ANSI, ';');
+   if(h == INVALID_HANDLE)
+      return 0;
+
+   // salta header (6 colonne)
+   for(int i = 0; i < 6 && !FileIsEnding(h); i++)
+      FileReadString(h);
+
+   if(FileIsEnding(h))
+   {
+      FileClose(h);
+      return 0;
+   }
+
+   string updateTime   = FileReadString(h);
+   string candidateBar = FileReadString(h);
+   string lastReadyBar = FileReadString(h);
+   string rowsWritten  = FileReadString(h);
+   string status       = FileReadString(h);
+   string reason       = FileReadString(h);
+
+   FileClose(h);
+
+   if(StringLen(lastReadyBar) <= 0)
+      return 0;
+
+   return StringToTime(lastReadyBar);
+}
+
+//+------------------------------------------------------------------+
+//| CAPTURE SNAPSHOT                                                 |
+//+------------------------------------------------------------------+
+void CaptureSnapshot(bool forceTry)
+{
+   g_lastError = "";
+   g_lastReason = "";
+   g_lastCaptureTime = TimeCurrent();
+
+   datetime closedBar = iTime(Symbol(), PERIOD_M15, 1); // ultima candela GIÀ CHIUSA
+   if(closedBar <= 0)
+   {
+      g_lastStatus = "NO_M15_CLOSED_BAR";
+      return;
+   }
+
+   if(!forceTry && closedBar == g_lastReadyBar)
+   {
+      g_lastStatus = "WAIT_NEXT_BAR";
+      return;
+   }
+
+   int invalidRows = 0;
+   if(!CollectTrustedSnapshot(invalidRows))
+   {
+      g_lastStatus = "COLLECT_FAILED";
+      g_lastReason = "CollectTrustedSnapshot=false";
+      WriteReadyMeta(TimeCurrent(), closedBar, g_lastReadyBar, g_snapCount, "WAIT", g_lastReason);
+      return;
+   }
+
+   g_lastRowsCollected = g_snapCount;
+   g_lastInvalidRows   = invalidRows;
+
+   if(g_snapCount < InpExpectedRows)
+   {
+      g_lastStatus = "WAIT_PARTIAL";
+      g_lastReason = "rows=" + IntegerToString(g_snapCount) + " < expected=" + IntegerToString(InpExpectedRows);
+      WriteReadyMeta(TimeCurrent(), closedBar, g_lastReadyBar, g_snapCount, "WAIT", g_lastReason);
+      if(InpVerboseJournal) Print("[COLLECTOR] WAIT: ", g_lastReason);
+      return;
+   }
+
+   if(invalidRows > 0)
+   {
+      g_lastStatus = "WAIT_INVALID";
+      g_lastReason = "invalidRows=" + IntegerToString(invalidRows);
+      WriteReadyMeta(TimeCurrent(), closedBar, g_lastReadyBar, g_snapCount, "WAIT", g_lastReason);
+      if(InpVerboseJournal) Print("[COLLECTOR] WAIT: ", g_lastReason);
+      return;
+   }
+
+   if(!WriteLatestSnapshot(TimeCurrent(), closedBar))
+   {
+      g_lastStatus = "ERR_LATEST";
+      WriteReadyMeta(TimeCurrent(), closedBar, g_lastReadyBar, g_snapCount, "WAIT", g_lastError);
+      return;
+   }
+
+   if(InpWriteLatestHTML)
+   {
+      if(!WriteLatestHTML(TimeCurrent(), closedBar) && InpVerboseJournal)
+         Print("[COLLECTOR] Warning HTML: ", g_lastError);
+   }
+
+   if(!AppendHistorySnapshot(TimeCurrent(), closedBar))
+   {
+      g_lastStatus = "ERR_HISTORY";
+      WriteReadyMeta(TimeCurrent(), closedBar, g_lastReadyBar, g_snapCount, "WAIT", g_lastError);
+      return;
+   }
+
+   g_lastReadyBar = closedBar;
+   g_totalReadySnaps++;
+   g_lastStatus = "READY";
+   g_lastReason = "";
+   WriteReadyMeta(TimeCurrent(), closedBar, g_lastReadyBar, g_snapCount, "READY", "");
+
+   if(InpVerboseJournal)
+   {
+      Print("[COLLECTOR] READY | bar=", TimeToString(closedBar, TIME_DATE | TIME_MINUTES),
+            " | rows=", g_snapCount,
+            " | iCustom=", g_lastICustomCalls);
+   }
+}
+
+//+------------------------------------------------------------------+
+//| COLLECT TRUSTED SNAPSHOT                                         |
+//+------------------------------------------------------------------+
+bool CollectTrustedSnapshot(int &invalidRows)
+{
+   g_snapCount = 0;
+   g_lastICustomCalls = 0;
+   invalidRows = 0;
+
+   int blankStreak = 0;
+
+   for(int row = 0; row < InpMaxRowsToScan && row < MAX_ROWS; row++)
+   {
+      string pairObj   = InpPairPrefix   + IntegerToString(row);
+      string signalObj = InpSignalPrefix + IntegerToString(row);
+      string adrObj    = InpADRPrefix    + IntegerToString(row);
+      string rxObj     = InpRXPrefix     + IntegerToString(row);
+
+      bool pairExists   = (ObjectFind(0, pairObj)   >= 0);
+      bool signalExists = (ObjectFind(0, signalObj) >= 0);
+      bool adrExists    = (ObjectFind(0, adrObj)    >= 0);
+      bool rxExists     = (ObjectFind(0, rxObj)     >= 0);
+
+      if(!pairExists && !signalExists && !adrExists && !rxExists)
+      {
+         blankStreak++;
+         if(g_snapCount > 0 && blankStreak >= 5)
+            break;
+         continue;
+      }
+
+      string pairText   = TrimStr(SafeObjText(pairObj));
+      string signalText = TrimStr(SafeObjText(signalObj));
+      string adrText    = TrimStr(SafeObjText(adrObj));
+      string rxText     = TrimStr(SafeObjText(rxObj));
+
+      if(pairText == "" && signalText == "" && adrText == "" && rxText == "")
+      {
+         blankStreak++;
+         if(g_snapCount > 0 && blankStreak >= 5)
+            break;
+         continue;
+      }
+      blankStreak = 0;
+
+      string pairCore = NormalizePairCore(pairText);
+      if(pairCore == "")
+         continue;
+
+      string brokerSym = ResolveBrokerSymbol(pairCore);
+
+      string screenType = "UNKNOWN";
+      string screenClass = "UNKNOWN";
+      double screenValue = 0.0;
+      ParseSignalText(signalText, screenType, screenClass, screenValue);
+
+      double adrDone = 0.0, adrAvg = 0.0, adrPct = 0.0;
+      ParseADRText(adrText, adrDone, adrAvg, adrPct);
+
+      string rxType = "NONE";
+      int rxAge = 0;
+      ParseRXText(rxText, rxType, rxAge);
+
+      string finalState = screenType;
+      double finalValue = screenValue;
+      string stateSource = "SCREEN";
+      bool rowValid = true;
+      string invalidReason = "";
+
+      if(screenType == "LONG" || screenType == "SHORT")
+      {
+         double buf0 = 0.0, buf1 = 0.0, buf2 = 0.0, buf3 = 0.0, buf4 = 0.0;
+         string icState = "NONE";
+         double icValue = 0.0;
+         int allZeroFlag = 0;
+
+         g_lastICustomCalls++;
+         ReadRadarShift1(brokerSym, buf0, buf1, buf2, buf3, buf4, icState, icValue, allZeroFlag);
+
+         finalState = icState;
+         finalValue = icValue;
+         stateSource = "ICUSTOM";
+
+         if(allZeroFlag == 1)
+         {
+            rowValid = false;
+            invalidReason = "all buffers zero";
+         }
+         else if(icState == "NONE" || icState == "")
+         {
+            rowValid = false;
+            invalidReason = "iCustom state NONE";
+         }
+      }
+      else if(screenType == "RISE" || screenType == "FALL" || screenType == "GRAY")
+      {
+         finalState = screenType;
+         finalValue = screenValue;
+         stateSource = "SCREEN";
+      }
+      else
+      {
+         rowValid = false;
+         invalidReason = "screenType=" + screenType;
+      }
+
+      double o = iOpen(brokerSym, PERIOD_M15, 1);
+      double h = iHigh(brokerSym, PERIOD_M15, 1);
+      double l = iLow(brokerSym, PERIOD_M15, 1);
+      double c = iClose(brokerSym, PERIOD_M15, 1);
+      double ema21  = iMA(brokerSym, PERIOD_M15, 21, 0, MODE_EMA, PRICE_CLOSE, 1);
+      double ema200 = iMA(brokerSym, PERIOD_M15, 200, 0, MODE_EMA, PRICE_CLOSE, 1);
+      double pipSize = GetPipSize(brokerSym);
+      double emaDistPips = 0.0;
+      if(pipSize > 0)
+         emaDistPips = (ema21 - ema200) / pipSize;
+
+      if(o <= 0 || h <= 0 || l <= 0 || c <= 0)
+      {
+         rowValid = false;
+         if(invalidReason == "") invalidReason = "OHLC zero";
+      }
+      if(ema21 <= 0 || ema200 <= 0)
+      {
+         rowValid = false;
+         if(invalidReason == "") invalidReason = "EMA zero";
+      }
+
+      int idx = g_snapCount;
+      g_snapPairCore[idx]      = pairCore;
+      g_snapBrokerSym[idx]     = brokerSym;
+      g_snapOpen[idx]          = o;
+      g_snapHigh[idx]          = h;
+      g_snapLow[idx]           = l;
+      g_snapClose[idx]         = c;
+      g_snapEMA21[idx]         = ema21;
+      g_snapEMA200[idx]        = ema200;
+      g_snapEMADistPips[idx]   = emaDistPips;
+      g_snapScreenType[idx]    = screenType;
+      g_snapScreenValue[idx]   = screenValue;
+      g_snapFinalState[idx]    = finalState;
+      g_snapFinalValue[idx]    = finalValue;
+      g_snapADRDone[idx]       = adrDone;
+      g_snapADRAvg[idx]        = adrAvg;
+      g_snapADRPct[idx]        = adrPct;
+      g_snapRXType[idx]        = rxType;
+      g_snapRXAge[idx]         = rxAge;
+      g_snapStateSource[idx]   = stateSource;
+      g_snapValid[idx]         = rowValid;
+      g_snapInvalidReason[idx] = invalidReason;
+      g_snapCount++;
+
+      if(!rowValid)
+         invalidRows++;
+   }
+
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| WRITE HEADER COMMON                                              |
+//+------------------------------------------------------------------+
+void WriteSnapshotHeader(int handle)
+{
+   FileWrite(handle,
+      "CaptureTime",
+      "ClosedBarTime",
+      "PairCore",
+      "BrokerSymbol",
+      "Open",
+      "High",
+      "Low",
+      "Close",
+      "EMA21",
+      "EMA200",
+      "EMA_Dist_Pips",
+      "ScreenType",
+      "ScreenValue",
+      "FinalState",
+      "FinalValue",
+      "ADR_Done",
+      "ADR_Avg10",
+      "ADR_Pct",
+      "RXType",
+      "RXAge",
+      "StateSource"
+   );
+}
+
+//+------------------------------------------------------------------+
+//| ENSURE HISTORY HEADER                                            |
+//+------------------------------------------------------------------+
+bool EnsureHistoryHeader()
+{
+   int h = FileOpen(InpHistoryFile, FILE_CSV | FILE_READ | FILE_WRITE | FILE_ANSI, ';');
+   if(h == INVALID_HANDLE)
+   {
+      g_lastError = "Apertura history fallita: " + InpHistoryFile + " err=" + IntegerToString(GetLastError());
+      if(InpVerboseJournal) Print("[COLLECTOR] ", g_lastError);
+      return false;
+   }
+
+   bool needHeader = true;
+   if(FileSize(h) > 10)
+   {
+      FileSeek(h, 0, SEEK_SET);
+      string first = FileReadString(h);
+      if(first == "CaptureTime")
+         needHeader = false;
+   }
+
+   if(needHeader)
+   {
+      FileSeek(h, 0, SEEK_END);
+      WriteSnapshotHeader(h);
+   }
+
+   FileClose(h);
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| WRITE LATEST SNAPSHOT                                            |
+//+------------------------------------------------------------------+
+bool WriteLatestSnapshot(datetime captureTime, datetime closedBarTime)
+{
+   int h = FileOpen(InpLatestFile, FILE_CSV | FILE_WRITE | FILE_ANSI, ';');
+   if(h == INVALID_HANDLE)
+   {
+      g_lastError = "Apertura latest fallita: " + InpLatestFile + " err=" + IntegerToString(GetLastError());
+      if(InpVerboseJournal) Print("[COLLECTOR] ", g_lastError);
+      return false;
+   }
+
+   WriteSnapshotHeader(h);
+
+   string captureStr = TimeToString(captureTime, TIME_DATE | TIME_SECONDS);
+   string barStr     = TimeToString(closedBarTime, TIME_DATE | TIME_MINUTES);
+
+   for(int i = 0; i < g_snapCount; i++)
+   {
+      int digits = (int)MarketInfo(g_snapBrokerSym[i], MODE_DIGITS);
+      FileWrite(h,
+         captureStr,
+         barStr,
+         g_snapPairCore[i],
+         g_snapBrokerSym[i],
+         DoubleToString(g_snapOpen[i], digits),
+         DoubleToString(g_snapHigh[i], digits),
+         DoubleToString(g_snapLow[i], digits),
+         DoubleToString(g_snapClose[i], digits),
+         DoubleToString(g_snapEMA21[i], digits),
+         DoubleToString(g_snapEMA200[i], digits),
+         DoubleToString(g_snapEMADistPips[i], 1),
+         g_snapScreenType[i],
+         DoubleToString(g_snapScreenValue[i], 2),
+         g_snapFinalState[i],
+         DoubleToString(g_snapFinalValue[i], 2),
+         DoubleToString(g_snapADRDone[i], 1),
+         DoubleToString(g_snapADRAvg[i], 1),
+         DoubleToString(g_snapADRPct[i], 1),
+         g_snapRXType[i],
+         g_snapRXAge[i],
+         g_snapStateSource[i]
+      );
+   }
+
+   FileClose(h);
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| APPEND HISTORY SNAPSHOT                                          |
+//+------------------------------------------------------------------+
+bool AppendHistorySnapshot(datetime captureTime, datetime closedBarTime)
+{
+   int h = FileOpen(InpHistoryFile, FILE_CSV | FILE_READ | FILE_WRITE | FILE_ANSI, ';');
+   if(h == INVALID_HANDLE)
+   {
+      g_lastError = "Apertura history append fallita: " + InpHistoryFile + " err=" + IntegerToString(GetLastError());
+      if(InpVerboseJournal) Print("[COLLECTOR] ", g_lastError);
+      return false;
+   }
+
+   if(FileSize(h) <= 10)
+      WriteSnapshotHeader(h);
+
+   FileSeek(h, 0, SEEK_END);
+
+   string captureStr = TimeToString(captureTime, TIME_DATE | TIME_SECONDS);
+   string barStr     = TimeToString(closedBarTime, TIME_DATE | TIME_MINUTES);
+
+   for(int i = 0; i < g_snapCount; i++)
+   {
+      int digits = (int)MarketInfo(g_snapBrokerSym[i], MODE_DIGITS);
+      FileWrite(h,
+         captureStr,
+         barStr,
+         g_snapPairCore[i],
+         g_snapBrokerSym[i],
+         DoubleToString(g_snapOpen[i], digits),
+         DoubleToString(g_snapHigh[i], digits),
+         DoubleToString(g_snapLow[i], digits),
+         DoubleToString(g_snapClose[i], digits),
+         DoubleToString(g_snapEMA21[i], digits),
+         DoubleToString(g_snapEMA200[i], digits),
+         DoubleToString(g_snapEMADistPips[i], 1),
+         g_snapScreenType[i],
+         DoubleToString(g_snapScreenValue[i], 2),
+         g_snapFinalState[i],
+         DoubleToString(g_snapFinalValue[i], 2),
+         DoubleToString(g_snapADRDone[i], 1),
+         DoubleToString(g_snapADRAvg[i], 1),
+         DoubleToString(g_snapADRPct[i], 1),
+         g_snapRXType[i],
+         g_snapRXAge[i],
+         g_snapStateSource[i]
+      );
+   }
+
+   FileClose(h);
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| WRITE READY META                                                 |
+//+------------------------------------------------------------------+
+bool WriteReadyMeta(datetime updateTime, datetime candidateBar, datetime lastReadyBar, int rowsWritten, string status, string reason)
+{
+   int h = FileOpen(InpReadyFile, FILE_CSV | FILE_WRITE | FILE_ANSI, ';');
+   if(h == INVALID_HANDLE)
+   {
+      if(InpVerboseJournal)
+         Print("[COLLECTOR] Errore scrittura READY: err=", GetLastError());
+      return false;
+   }
+
+   FileWrite(h,
+      "UpdateTime",
+      "CandidateBar",
+      "LastReadyBar",
+      "RowsWritten",
+      "Status",
+      "Reason"
+   );
+
+   FileWrite(h,
+      TimeToString(updateTime, TIME_DATE | TIME_SECONDS),
+      (candidateBar > 0 ? TimeToString(candidateBar, TIME_DATE | TIME_MINUTES) : ""),
+      (lastReadyBar > 0 ? TimeToString(lastReadyBar, TIME_DATE | TIME_MINUTES) : ""),
+      rowsWritten,
+      status,
+      reason
+   );
+
+   FileClose(h);
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| WRITE LATEST HTML                                                |
+//+------------------------------------------------------------------+
+bool WriteLatestHTML(datetime captureTime, datetime closedBarTime)
+{
+   int h = FileOpen(InpLatestHTMLFile, FILE_WRITE | FILE_TXT | FILE_ANSI);
+   if(h == INVALID_HANDLE)
+   {
+      g_lastError = "Apertura HTML fallita: " + InpLatestHTMLFile + " err=" + IntegerToString(GetLastError());
+      return false;
+   }
+
+   string html = "";
+   html += "<html><head><meta charset='utf-8'>";
+   html += "<style>body{font-family:Arial;background:#111;color:#eee;}table{border-collapse:collapse;font-size:12px;}th,td{border:1px solid #444;padding:4px 6px;text-align:center;}th{background:#222;}.wrap{margin:10px;}</style>";
+   html += "</head><body><div class='wrap'>";
+   html += "<h3>PRP Trusted Latest</h3>";
+   html += "<div>CaptureTime: " + TimeToString(captureTime, TIME_DATE | TIME_SECONDS) + "</div>";
+   html += "<div>ClosedBarTime: " + TimeToString(closedBarTime, TIME_DATE | TIME_MINUTES) + "</div>";
+   html += "<table><tr>";
+   html += "<th>Pair</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>EMA21</th><th>EMA200</th><th>EMAΔ pips</th><th>State</th><th>Value</th><th>ADR%</th><th>RX</th><th>Source</th>";
+   html += "</tr>";
+
+   for(int i = 0; i < g_snapCount; i++)
+   {
+      int digits = (int)MarketInfo(g_snapBrokerSym[i], MODE_DIGITS);
+      string stateHexColor = StateColorHex(g_snapFinalState[i]);
+      string rxTxt = g_snapRXType[i];
+      if(g_snapRXAge[i] > 0 && g_snapRXType[i] != "NONE")
+         rxTxt = rxTxt + "(" + IntegerToString(g_snapRXAge[i]) + ")";
+
+      html += "<tr>";
+      html += "<td>" + g_snapPairCore[i] + "</td>";
+      html += "<td>" + DoubleToString(g_snapOpen[i], digits) + "</td>";
+      html += "<td>" + DoubleToString(g_snapHigh[i], digits) + "</td>";
+      html += "<td>" + DoubleToString(g_snapLow[i], digits) + "</td>";
+      html += "<td>" + DoubleToString(g_snapClose[i], digits) + "</td>";
+      html += "<td>" + DoubleToString(g_snapEMA21[i], digits) + "</td>";
+      html += "<td>" + DoubleToString(g_snapEMA200[i], digits) + "</td>";
+      html += "<td>" + DoubleToString(g_snapEMADistPips[i], 1) + "</td>";
+      html += "<td style='color:" + stateHexColor + ";font-weight:bold;'>" + g_snapFinalState[i] + "</td>";
+      html += "<td style='color:" + stateHexColor + ";font-weight:bold;'>" + DoubleToString(g_snapFinalValue[i], 2) + "</td>";
+      html += "<td>" + DoubleToString(g_snapADRPct[i], 1) + "</td>";
+      html += "<td>" + rxTxt + "</td>";
+      html += "<td>" + g_snapStateSource[i] + "</td>";
+      html += "</tr>";
+   }
+
+   html += "</table></div></body></html>";
+   FileWriteString(h, html);
+   FileClose(h);
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| SAFE OBJECT TEXT                                                 |
+//+------------------------------------------------------------------+
+string SafeObjText(string objName)
+{
+   if(ObjectFind(0, objName) < 0)
+      return "";
+   return ObjectGetString(0, objName, OBJPROP_TEXT);
+}
+
+//+------------------------------------------------------------------+
+//| STRING UTILS                                                     |
+//+------------------------------------------------------------------+
+string TrimStr(string s)
+{
+   StringTrimLeft(s);
+   StringTrimRight(s);
+   return s;
+}
+
+string NormalizePairCore(string s)
+{
+   s = TrimStr(s);
+   StringReplace(s, " ", "");
+   StringReplace(s, "+", "");
+   StringToUpper(s);
+   if(StringLen(s) >= 6)
+      return StringSubstr(s, 0, 6);
+   return s;
+}
+
+string ChartSuffix()
+{
+   string sym = Symbol();
+   if(StringLen(sym) > 6)
+      return StringSubstr(sym, 6);
+   return "";
+}
+
+string ResolveBrokerSymbol(string pairCore)
+{
+   string suff = ChartSuffix();
+   string s1 = pairCore + suff;
+   string s2 = pairCore;
+   string s3 = pairCore + "+";
+
+   if(MarketInfo(s1, MODE_BID) > 0) return s1;
+   if(MarketInfo(s2, MODE_BID) > 0) return s2;
+   if(MarketInfo(s3, MODE_BID) > 0) return s3;
+
+   return s1;
+}
+
+double GetPipSize(string sym)
+{
+   double point = MarketInfo(sym, MODE_POINT);
+   int digits = (int)MarketInfo(sym, MODE_DIGITS);
+   if(point <= 0) return 0;
+   if(digits == 3 || digits == 5) return point * 10.0;
+   return point;
+}
+
+string StateColorHex(string state)
+{
+   if(state == "RED_LIGHT")   return "#ff4d4d";
+   if(state == "RED_DARK")    return "#b22222";
+   if(state == "GREEN_LIGHT") return "#32cd32";
+   if(state == "GREEN_DARK")  return "#228b22";
+   if(state == "GRAY" || state == "RISE" || state == "FALL") return "#b0b0b0";
+   return "#ffffff";
+}
+
+//+------------------------------------------------------------------+
+//| PARSE SIGNAL TEXT                                                |
+//+------------------------------------------------------------------+
+void ParseSignalText(string s, string &screenType, string &screenClass, double &screenValue)
+{
+   string u = TrimStr(s);
+   StringToUpper(u);
+
+   screenType = "UNKNOWN";
+   screenClass = "UNKNOWN";
+   screenValue = 0.0;
+
+   if(u == "" || u == "-" || u == "--" || u == "---")
+   {
+      screenType = "EMPTY";
+      screenClass = "EMPTY";
+      return;
+   }
+
+   if(StringFind(u, "LONG") == 0)
+   {
+      screenType = "LONG";
+      screenClass = "GREEN";
+   }
+   else if(StringFind(u, "SHORT") == 0)
+   {
+      screenType = "SHORT";
+      screenClass = "RED";
+   }
+   else if(StringFind(u, "RISE") == 0)
+   {
+      screenType = "RISE";
+      screenClass = "GRAY";
+   }
+   else if(StringFind(u, "FALL") == 0)
+   {
+      screenType = "FALL";
+      screenClass = "GRAY";
+   }
+   else if(u == "GRAY" || u == "GREY")
+   {
+      screenType = "GRAY";
+      screenClass = "GRAY";
+   }
+
+   string num = ExtractFirstNumberToken(u);
+   if(num != "")
+   {
+      double v = StringToDouble(num);
+      if(screenType == "SHORT" || screenType == "FALL")
+         screenValue = -MathAbs(v);
+      else
+         screenValue = MathAbs(v);
+   }
+}
+
+//+------------------------------------------------------------------+
+//| PARSE ADR TEXT                                                   |
+//+------------------------------------------------------------------+
+void ParseADRText(string s, double &done, double &avg, double &pct)
+{
+   string u = TrimStr(s);
+   done = 0.0;
+   avg  = 0.0;
+   pct  = 0.0;
+
+   int slash = StringFind(u, "/");
+   if(slash < 0) return;
+
+   string leftPart = TrimStr(StringSubstr(u, 0, slash));
+   string rightPart = TrimStr(StringSubstr(u, slash + 1));
+   int sp = StringFind(rightPart, " ");
+   if(sp >= 0)
+      rightPart = TrimStr(StringSubstr(rightPart, 0, sp));
+
+   done = StringToDouble(leftPart);
+   avg  = StringToDouble(rightPart);
+   if(avg > 0)
+      pct = (done / avg) * 100.0;
+}
+
+//+------------------------------------------------------------------+
+//| PARSE RX TEXT                                                    |
+//+------------------------------------------------------------------+
+void ParseRXText(string s, string &rxType, int &rxAge)
+{
+   string u = TrimStr(s);
+   StringToUpper(u);
+
+   rxType = "NONE";
+   rxAge = 0;
+
+   if(u == "" || u == "-" || u == "--" || u == "---")
+      return;
+
+   if(StringFind(u, "NEW-H") >= 0)
+   {
+      rxType = "NEW_H";
+      rxAge = ExtractFirstInt(u);
+      if(rxAge <= 0) rxAge = 1;
+      return;
+   }
+
+   if(StringFind(u, "NEW-L") >= 0)
+   {
+      rxType = "NEW_L";
+      rxAge = ExtractFirstInt(u);
+      if(rxAge <= 0) rxAge = 1;
+      return;
+   }
+
+   rxType = u;
+}
+
+//+------------------------------------------------------------------+
+//| EXTRACT NUMBER TOKEN                                             |
+//+------------------------------------------------------------------+
+string ExtractFirstNumberToken(string s)
+{
+   string out = "";
+   bool started = false;
+
+   for(int i = 0; i < StringLen(s); i++)
+   {
+      string ch = StringSubstr(s, i, 1);
+      bool isNum  = (ch >= "0" && ch <= "9");
+      bool isSign = (ch == "-" || ch == "+");
+      bool isDot  = (ch == "." || ch == ",");
+
+      if(!started)
+      {
+         if(isNum || isSign)
+         {
+            out += ch;
+            started = true;
+         }
+      }
+      else
+      {
+         if(isNum || isDot)
+            out += ch;
+         else
+            break;
+      }
+   }
+
+   StringReplace(out, ",", ".");
+   return out;
+}
+
+int ExtractFirstInt(string s)
+{
+   string out = "";
+   bool started = false;
+
+   for(int i = 0; i < StringLen(s); i++)
+   {
+      string ch = StringSubstr(s, i, 1);
+      bool isNum = (ch >= "0" && ch <= "9");
+      if(!started)
+      {
+         if(isNum)
+         {
+            out += ch;
+            started = true;
+         }
+      }
+      else
+      {
+         if(isNum)
+            out += ch;
+         else
+            break;
+      }
+   }
+
+   if(out == "") return 0;
+   return (int)StringToDouble(out);
+}
+
+//+------------------------------------------------------------------+
+//| READ RADAR SHIFT 1                                               |
+//+------------------------------------------------------------------+
+void ReadRadarShift1(string brokerSym,
+                     double &buf0, double &buf1, double &buf2, double &buf3, double &buf4,
+                     string &state, double &value, int &allZeroFlag)
+{
+   int shift = 1;
+
+   buf0 = iCustom(brokerSym, PERIOD_M15, InpRadarIndicator, 0, shift);
+   buf1 = iCustom(brokerSym, PERIOD_M15, InpRadarIndicator, 1, shift);
+   buf2 = iCustom(brokerSym, PERIOD_M15, InpRadarIndicator, 2, shift);
+   buf3 = iCustom(brokerSym, PERIOD_M15, InpRadarIndicator, 3, shift);
+   buf4 = iCustom(brokerSym, PERIOD_M15, InpRadarIndicator, 4, shift);
+
+   if(MathAbs(buf0) > 1000) buf0 = 0;
+   if(MathAbs(buf1) > 1000) buf1 = 0;
+   if(MathAbs(buf2) > 1000) buf2 = 0;
+   if(MathAbs(buf3) > 1000) buf3 = 0;
+   if(MathAbs(buf4) > 1000) buf4 = 0;
+
+   state = "NONE";
+   value = 0.0;
+   allZeroFlag = 0;
+
+   if(buf0 > 0 && buf1 == 0 && buf2 == 0 && buf3 == 0)
+   {
+      state = "GREEN_LIGHT";
+      value = buf0;
+      return;
+   }
+   if(buf1 > 0 && buf0 == 0 && buf2 == 0 && buf3 == 0)
+   {
+      state = "GREEN_DARK";
+      value = buf1;
+      return;
+   }
+   if(buf2 < 0 && buf0 == 0 && buf1 == 0 && buf3 == 0)
+   {
+      state = "RED_LIGHT";
+      value = buf2;
+      return;
+   }
+   if(buf3 < 0 && buf0 == 0 && buf1 == 0 && buf2 == 0)
+   {
+      state = "RED_DARK";
+      value = buf3;
+      return;
+   }
+   if(buf4 != 0)
+   {
+      state = "GRAY";
+      value = buf4;
+      return;
+   }
+
+   if(buf0 == 0 && buf1 == 0 && buf2 == 0 && buf3 == 0 && buf4 == 0)
+      allZeroFlag = 1;
+}
+
+//+------------------------------------------------------------------+
+//| TF STRING                                                        |
+//+------------------------------------------------------------------+
+string TFToString(int tf)
+{
+   if(tf == PERIOD_M1)   return "M1";
+   if(tf == PERIOD_M5)   return "M5";
+   if(tf == PERIOD_M15)  return "M15";
+   if(tf == PERIOD_M30)  return "M30";
+   if(tf == PERIOD_H1)   return "H1";
+   if(tf == PERIOD_H4)   return "H4";
+   if(tf == PERIOD_D1)   return "D1";
+   if(tf == PERIOD_W1)   return "W1";
+   if(tf == PERIOD_MN1)  return "MN1";
+   return IntegerToString(tf);
+}
+//+------------------------------------------------------------------+
+
+
+//+------------------------------------------------------------------+
+//|  SERVER SYNC & CLOSED TRADES FEEDBACK (PONTE WEB)                |
+//+------------------------------------------------------------------+
+
+//--- Sincronizza lo stato dell'account MT4 con la dashboard di Render
+void SyncWithServer()
+{
+   string syncUrl = InpAIUrl;
+   StringReplace(syncUrl, "/predict", "/ea_status");
+
+   Print("[SYNC] Invio stato account a ", syncUrl, " ...");
+
+   double dailyPnL = AccountBalance() - AccountEquity(); // indicativo
+
+   string json = "{";
+   json += "\"balance\":" + DoubleToString(AccountBalance(), 2) + ",";
+   json += "\"equity\":" + DoubleToString(AccountEquity(), 2) + ",";
+   json += "\"open_trades\":" + IntegerToString(CountOpenPositions()) + ",";
+   json += "\"daily_pnl\":" + DoubleToString(dailyPnL, 2) + ",";
+   json += "\"ai_calls\":" + IntegerToString(g_aiCalls) + ",";
+   json += "\"ai_confirm\":" + IntegerToString(g_aiConfirm) + ",";
+   json += "\"ai_reject\":" + IntegerToString(g_aiReject) + ",";
+   json += "\"ai_errors\":" + IntegerToString(g_aiErrors) + ",";
+   json += "\"ai_missed_trades\":" + IntegerToString(g_aiMissedTrades) + ",";
+   json += "\"warmup_ok\":" + (g_warmupOK ? "true" : "false") + ",";
+   json += "\"data_source\":\"LIVE\",";
+   json += "\"cross_active\":" + IntegerToString(g_snapCount) + ",";
+   json += "\"cross_total\":" + IntegerToString(g_snapCount) + ",";
+   json += "\"ea_version\":\"2.00 (Dual)\"";
+   json += "}";
+
+   string headers = "Content-Type: application/json\r\n";
+   char postData[];
+   int len = StringLen(json);
+   ArrayResize(postData, len);
+   for(int i = 0; i < len; i++)
+      postData[i] = (char)StringGetCharacter(json, i);
+
+   char result[];
+   string resultHeaders;
+
+   int res = WebRequest("POST", syncUrl, headers, 5000, postData, result, resultHeaders);
+   if(res == -1)
+   {
+      int err = GetLastError();
+      Print("[SYNC] ERRORE WebRequest: ", err, " (", ErrDesc(err), ")");
+   }
+   else
+   {
+      Print("[SYNC] ✅ OK! Stato sincronizzato correttamente con Render.");
+   }
+}
+
+//--- Mantiene sveglio il server di Render
+void AIWarmupPing()
+{
+   string healthUrl = InpAIUrl;
+   StringReplace(healthUrl, "/predict", "/health");
+
+   char postData[];
+   char result[];
+   string resultHeaders;
+   string headers = "Content-Type: application/json\r\n";
+
+   int res = WebRequest("GET", healthUrl, headers, 3000, postData, result, resultHeaders);
+   if(res == -1)
+   {
+      g_warmupOK = false;
+      g_warmupTotalFail++;
+   }
+   else
+   {
+      g_warmupOK = true;
+      g_warmupLastTime = TimeCurrent();
+      g_warmupTotalOK++;
+      Print("[WARMUP] ✅ Ping OK! Server attivo.");
+   }
+}
+
+//--- Scansiona la cronologia dell'account per inviare feedback dei trade chiusi dell'Executor
+void CheckClosedTradesFeedback()
+{
+   for(int i = OrdersHistoryTotal() - 1; i >= 0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_HISTORY)) continue;
+      if(OrderMagicNumber() != InpExecutorMagic) continue;
+      if(OrderType() > OP_SELL) continue;
+
+      int ticket = OrderTicket();
+      if(FeedbackAlreadySent(ticket)) continue;
+
+      string sym      = OrderSymbol();
+      string dir      = (OrderType() == OP_BUY) ? "BUY" : "SELL";
+      double openP    = OrderOpenPrice();
+      double closeP   = OrderClosePrice();
+      datetime openT  = OrderOpenTime();
+      datetime closeT = OrderCloseTime();
+      double profit   = OrderProfit() + OrderSwap() + OrderCommission();
+      string comment  = OrderComment();
+
+      double pipSize = GetPipSize(sym);
+      double pips = 0;
+      if(pipSize > 0)
+         pips = (OrderType() == OP_BUY) ? (closeP - openP) / pipSize : (openP - closeP) / pipSize;
+
+      if(SendSingleFeedback(ticket, sym, dir, openP, closeP, openT, closeT, profit, pips, comment))
+      {
+         MarkFeedbackSent(ticket);
+      }
+   }
+}
+
+//--- Legge lo storico dall'archivio locale e invia il feedback completo al server
+bool SendSingleFeedback(int ticket, string sym, string dir, double openP, double closeP, datetime openT, datetime closeT, double profit, double pips, string comment)
+{
+   // Estraiamo il timestamp della barra di riferimento salvata nel commento dall'Executor (es. "PRP2_TRD_2026.07.22 15:00")
+   int datePos = StringFind(comment, "PRP2_");
+   if(datePos < 0) return false; // non è un commento valido dell'Executor
+
+   string targetBarStr = StringSubstr(comment, datePos + 9); // Salta il prefisso "PRP2_TRD_" o "PRP2_REV_"
+   StringTrimLeft(targetBarStr);
+   StringTrimRight(targetBarStr);
+
+   // Cerchiamo la riga corrispondente nell'archivio storico completo
+   int h = FileOpen(InpHistoryFile, FILE_CSV | FILE_READ | FILE_ANSI, ';');
+   if(h == INVALID_HANDLE) return false;
+
+   #define HIST_COLS 21
+   string fields[HIST_COLS];
+   bool rowFound = false;
+
+   // Salta header
+   for(int c = 0; c < HIST_COLS && !FileIsEnding(h); c++) FileReadString(h);
+
+   string sym_upper = NormSym(sym);
+   StringToUpper(sym_upper);
+
+   while(!FileIsEnding(h))
+   {
+      for(int c = 0; c < HIST_COLS; c++)
+      {
+         fields[c] = FileReadString(h);
+      }
+      if(FileIsEnding(h)) break;
+
+      string row_barTime = fields[1];
+      string row_sym = NormSym(fields[2]);
+      StringToUpper(row_sym);
+
+      if(row_sym == sym_upper && row_barTime == targetBarStr)
+      {
+         rowFound = true;
+         break;
+      }
+   }
+   FileClose(h);
+
+   if(!rowFound)
+   {
+      Print("[FEEDBACK] Riga di storico non trovata in ", InpHistoryFile, " per ", sym, " a barTime=", targetBarStr, ". Uso dati provvisori.");
+      // Creiamo riga provvisoria vuota per far passare l'esito base
+      for(int f_idx = 0; f_idx < HIST_COLS; f_idx++) fields[f_idx] = "";
+      fields[1] = targetBarStr;
+      fields[2] = sym;
+      fields[13] = (StringFind(comment, "REV") >= 0) ? "REV" : "TRD";
+   }
+
+   string json = BuildFeedbackJSON(ticket, sym, dir, profit, pips, comment, fields);
+   string res = AICallFeedback(json);
+
+   if(res != "")
+   {
+      Print("[FEEDBACK] ✅ Inviato con successo per ticket #", ticket, " | pips=", DoubleToString(pips, 1));
+      return true;
+   }
+   return false;
+}
+
+//--- Costruisce il payload JSON per il feedback
+string BuildFeedbackJSON(int ticket, string sym, string dir, double profit, double pips, string comment, string &fields[])
+{
+   string module = (StringFind(comment, "REV") >= 0) ? "REV" : "TRD";
+
+   string json = "{";
+   json += "\"ticket\":" + IntegerToString(ticket) + ",";
+   json += "\"symbol\":\"" + NormSym(sym) + "\",";
+   json += "\"direction\":\"" + dir + "\",";
+   json += "\"module\":\"" + module + "\",";
+   json += "\"profit\":" + DoubleToString(profit, 2) + ",";
+   json += "\"pips\":" + DoubleToString(pips, 1) + ",";
+   json += "\"won\":" + (profit >= 0 ? "true" : "false") + ",";
+   
+   // Se abbiamo trovato i dati storici, arricchiamo il feedback con le features reali di entrata!
+   if(fields[2] != "")
+   {
+      json += "\"open\":" + fields[4] + ",";
+      json += "\"high\":" + fields[5] + ",";
+      json += "\"low\":" + fields[6] + ",";
+      json += "\"close\":" + fields[7] + ",";
+      json += "\"ema21\":" + fields[8] + ",";
+      json += "\"ema200\":" + fields[9] + ",";
+      json += "\"ema_dist_pips\":" + fields[10] + ",";
+      json += "\"screen_type\":\"" + fields[11] + "\",";
+      json += "\"screen_value\":" + fields[12] + ",";
+      json += "\"hist\":\"" + fields[13] + "\","; // FinalState
+      json += "\"rv\":" + fields[14] + ",";          // FinalValue
+      json += "\"adr_done\":" + fields[15] + ",";
+      json += "\"adr_media\":" + fields[16] + ",";
+      json += "\"adr_pct\":" + fields[17] + ",";
+      json += "\"rx_type\":\"" + fields[18] + "\",";
+      json += "\"rx_age\":" + fields[19] + ",";
+      json += "\"state_source\":\"" + fields[20] + "\"";
+   }
+   else
+   {
+      // Fallback minimale
+      json += "\"hist\":\"GRAY\",";
+      json += "\"rv\":0.0,";
+      json += "\"adr_pct\":50.0";
+   }
+   json += "}";
+   return json;
+}
+
+//--- Invia il feedback al server
+string AICallFeedback(string json)
+{
+   string fbUrl = InpAIUrl;
+   StringReplace(fbUrl, "/predict", "/feedback");
+
+   string headers = "Content-Type: application/json\r\n";
+   char postData[];
+   int len = StringLen(json);
+   ArrayResize(postData, len);
+   for(int i = 0; i < len; i++)
+      postData[i] = (char)StringGetCharacter(json, i);
+
+   char result[];
+   string resultHeaders;
+
+   int res = WebRequest("POST", fbUrl, headers, 5000, postData, result, resultHeaders);
+   if(res == -1)
+   {
+      return "";
+   }
+
+   string respStr = "";
+   int resultLen = ArraySize(result);
+   for(int i = 0; i < resultLen; i++)
+      respStr += CharToString(result[i]);
+
+   return respStr;
+}
+
+//--- Controlla se il ticket è già stato inviato
+bool FeedbackAlreadySent(int ticket)
+{
+   int h = FileOpen(InpFeedbackFile, FILE_CSV | FILE_READ | FILE_ANSI, ';');
+   if(h == INVALID_HANDLE) return false;
+
+   while(!FileIsEnding(h))
+   {
+      string id = FileReadString(h);
+      if((int)StringToDouble(id) == ticket)
+      {
+         FileClose(h);
+         return true;
+      }
+   }
+   FileClose(h);
+   return false;
+}
+
+//--- Registra il ticket come inviato nel file locale
+void MarkFeedbackSent(int ticket)
+{
+   int h = FileOpen(InpFeedbackFile, FILE_CSV | FILE_READ | FILE_WRITE | FILE_ANSI, ';');
+   if(h != INVALID_HANDLE)
+   {
+      FileSeek(h, 0, SEEK_END);
+      FileWrite(h, ticket);
+      FileClose(h);
+   }
+}
+
+//--- Recupera eventuali feedback persi
+void RecoverMissedFeedback()
+{
+   // Gira in automatico all'interno di CheckClosedTradesFeedback()
+}
+
+//--- KEEP-ALIVE: ping leggero verso /ping per impedire lo sleep di Render
+void KeepAlivePing()
+{
+   string kaUrl = InpAIUrl;
+   StringReplace(kaUrl, "/predict", "/ping");
+
+   char postData[];
+   char result[];
+   string resultHeaders;
+   string headers = "Content-Type: application/json\r\n";
+
+   ResetLastError();
+   int res = WebRequest("GET", kaUrl, headers, InpKeepAliveTimeout,
+                        postData, result, resultHeaders);
+
+   if(res == -1)
+   {
+      int err = GetLastError();
+      g_kaTotalFail++;
+      g_warmupOK = false;
+      if(InpVerboseJournal)
+         Print("[KEEPALIVE] ERRORE ", err, " (", ErrDesc(err), ") su ", kaUrl);
+      return;
+   }
+
+   g_kaTotalOK++;
+   g_kaLastOK = TimeCurrent();
+   g_warmupOK = true;
+   g_warmupLastTime = TimeCurrent();
+
+   string resp = "";
+   int n = ArraySize(result);
+   for(int i = 0; i < n; i++)
+      resp += CharToString(result[i]);
+
+   //--- Se la config e' cambiata sulla dashboard, risincronizza subito
+   string cv = JsonGetString(resp, "config_version");
+   if(cv != "" && g_kaConfigVersion != "" && cv != g_kaConfigVersion)
+   {
+      Print("[KEEPALIVE] Config cambiata sulla dashboard -> risincronizzo");
+      SyncWithServer();
+   }
+   if(cv != "")
+      g_kaConfigVersion = cv;
+
+   if(InpVerboseJournal)
+      Print("[KEEPALIVE] OK (", g_kaTotalOK, " ok / ", g_kaTotalFail, " ko)");
+}
+
+//--- Estrae un valore stringa da un JSON semplice
+string JsonGetString(string json, string key)
+{
+   string pat = "\"" + key + "\":\"";
+   int p = StringFind(json, pat);
+   if(p < 0) return "";
+   p += StringLen(pat);
+   int e = StringFind(json, "\"", p);
+   if(e < 0) return "";
+   return StringSubstr(json, p, e - p);
+}
+
+//--- Descrizione errori WebRequest
+string ErrDesc(int err)
+{
+   switch(err)
+   {
+      case 4014: return "WebRequest non permesso. Aggiungi URL in Strumenti > Opzioni > EA";
+      case 4059: return "Funzione WebRequest fallita";
+      default: return "Codice errore " + IntegerToString(err);
+   }
+}
+
+
+//+------------------------------------------------------------------+
+//|  ADDITIONAL COMPILATION HELPERS                                  |
+//+------------------------------------------------------------------+
+
+//--- Calcola le posizioni aperte totali con il Magic dell'Executor
+int CountOpenPositions()
+{
+   int count = 0;
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(OrderMagicNumber() != InpExecutorMagic) continue;
+      if(OrderType() > OP_SELL) continue;
+      count++;
+   }
+   return count;
+}
+
+//--- Normalizza il simbolo rimuovendo il suffisso + (alias per compatibilità)
+string NormSym(string sym)
+{
+   return NormalizePairCore(sym);
+}
