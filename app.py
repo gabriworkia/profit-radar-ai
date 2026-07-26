@@ -7,15 +7,18 @@ Include tutti gli endpoint mancanti e la sincronizzazione dati dashboard.
 
 import os
 import json
+import threading
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, redirect, Response
 from flask_cors import CORS
 
 # ============================================================
 #  CONFIGURAZIONE PATH
 # ============================================================
+SERVER_VERSION = "5.4"
+
 DATA_DIR = os.environ.get("DATA_DIR", "Data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -26,6 +29,24 @@ TRADE_LOG_PATH = os.path.join(DATA_DIR, "PRP_TradeLog.csv")
 
 app = Flask(__name__)
 CORS(app)
+
+# Lock: gunicorn gira con --threads 2, quindi /ea_status e /feedback possono
+# essere serviti in parallelo. Senza lock i file JSON/CSV si corrompono.
+_write_lock = threading.RLock()
+
+# Ordine colonne canonico del feedback. L'EA invia due payload DIVERSI
+# (completo con dati storici, oppure minimale di fallback): senza uno schema
+# fisso le righe finivano disallineate rispetto all'header del CSV.
+FEEDBACK_COLUMNS = [
+    "timestamp", "ticket", "symbol", "direction", "module",
+    "profit", "pips", "won",
+    "open", "high", "low", "close",
+    "ema21", "ema200", "ema_dist_pips",
+    "screen_type", "screen_value",
+    "hist", "rv", "adr_done", "adr_media", "adr_pct",
+    "rx_type", "rx_age", "state_source",
+    "adx", "ai_confidence", "ai_signal", "entry_price", "exit_price",
+]
 
 # ============================================================
 #  DEFAULT CONFIG
@@ -71,7 +92,7 @@ DEFAULT_EA_CONFIG = {
     "loss_weight": 1.5
 }
 
-ea_status = {
+DEFAULT_EA_STATUS = {
     "last_update": None,
     "balance": 0,
     "equity": 0,
@@ -94,9 +115,13 @@ ea_status = {
     "data_source": "LIVE",
     "cross_active": 0,
     "cross_total": 0,
+    "account_currency": "EUR",
     "ea_version": "2.00 (Dual)",
-    "peaks": {}
+    "peaks": {},
 }
+
+ea_status = dict(DEFAULT_EA_STATUS)
+
 
 # ============================================================
 #  FUNZIONI UTILI
@@ -116,8 +141,35 @@ def load_ea_config():
 
 
 def save_ea_config(cfg):
-    with open(EA_CONFIG_PATH, "w") as f:
-        json.dump(cfg, f, indent=2)
+    with _write_lock:
+        tmp = EA_CONFIG_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+        os.replace(tmp, EA_CONFIG_PATH)  # scrittura atomica
+
+
+def load_ea_status():
+    """Stato EA da disco, con fallback ai default (sopravvive ai restart)."""
+    status = dict(DEFAULT_EA_STATUS)
+    status.update(ea_status)
+    if os.path.exists(EA_STATUS_PATH):
+        try:
+            with open(EA_STATUS_PATH, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+            if isinstance(saved, dict):
+                status.update(saved)
+        except Exception as e:
+            print(f"[STATUS] Errore caricamento: {e}")
+    if not isinstance(status.get("peaks"), dict):
+        status["peaks"] = {}
+    return status
+
+
+def save_ea_status(status):
+    tmp = EA_STATUS_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(sanitize_for_json(status), f, indent=2)
+    os.replace(tmp, EA_STATUS_PATH)
 
 
 def sanitize_for_json(obj):
@@ -140,54 +192,241 @@ def sanitize_for_json(obj):
     return obj
 
 
+def normalize_symbol(sym):
+    """EURUSD+ / eurusd / ' EURUSD ' -> EURUSD (broker suffix inclusi)."""
+    s = str(sym).upper().strip()
+    for suffix in ("+", ".", "_", "-"):
+        while s.endswith(suffix):
+            s = s[:-1]
+    for suffix in ("MICRO", "PRO", "ECN", "M", "C", "I"):
+        if len(s) > 6 and s.endswith(suffix):
+            s = s[: -len(suffix)]
+    return s.strip()
+
+
+def parse_ea_json():
+    """
+    L'EA MQL4 costruisce il JSON via concatenazione di stringhe: se un campo
+    del CSV storico e' vuoto produce `"rv":,` -> JSON non valido e Flask
+    risponde 400, per cui il feedback veniva perso silenziosamente.
+    Qui proviamo il parse standard e, se fallisce, ripariamo i casi tipici.
+    """
+    data = request.get_json(force=True, silent=True)
+    if data:
+        return data
+
+    raw = request.get_data(as_text=True) or ""
+    if not raw.strip():
+        return None
+
+    import re
+    fixed = raw
+    # "campo":,      -> "campo":null,
+    fixed = re.sub(r':\s*(?=[,}])', ': null', fixed)
+    # valori nudi non quotati (es. 2026.05.26 09:20) -> stringa
+    fixed = re.sub(r',\s*}', '}', fixed)
+    # virgole doppie
+    fixed = re.sub(r',\s*,', ',', fixed)
+    try:
+        data = json.loads(fixed)
+        print("[JSON] Payload EA malformato riparato automaticamente.")
+        return data
+    except Exception as e:
+        print(f"[JSON] Impossibile riparare il payload EA: {e} | raw={raw[:300]}")
+        return None
+
+
+def count_csv_rows(path):
+    if not os.path.exists(path):
+        return 0
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            return max(sum(1 for _ in f) - 1, 0)
+    except Exception:
+        return 0
+
+
+def migrate_feedback_file():
+    """Riallinea un feedback.csv storico allo schema canonico."""
+    try:
+        old = pd.read_csv(FEEDBACK_PATH, on_bad_lines="skip")
+        out = pd.DataFrame(columns=FEEDBACK_COLUMNS)
+        for col in FEEDBACK_COLUMNS:
+            out[col] = old[col] if col in old.columns else ""
+        backup = FEEDBACK_PATH + ".bak"
+        os.replace(FEEDBACK_PATH, backup)
+        out.to_csv(FEEDBACK_PATH, index=False, encoding="utf-8")
+        print(f"[FEEDBACK] Schema migrato ({len(out)} righe). Backup: {backup}")
+    except Exception as e:
+        print(f"[FEEDBACK] Migrazione fallita: {e}")
+
+
+def read_trade_log():
+    """Legge PRP_TradeLog.csv (separatore ';') in modo tollerante."""
+    if not os.path.exists(TRADE_LOG_PATH):
+        return None
+    try:
+        df = pd.read_csv(TRADE_LOG_PATH, sep=";", on_bad_lines="skip",
+                         encoding="utf-8", encoding_errors="replace")
+        df.columns = [str(c).strip().lower().replace("%", "_pct") for c in df.columns]
+        return df
+    except Exception as e:
+        print(f"[TRADELOG] Errore lettura: {e}")
+        return None
+
+
+def read_feedback_log():
+    if not os.path.exists(FEEDBACK_PATH):
+        return None
+    try:
+        df = pd.read_csv(FEEDBACK_PATH, on_bad_lines="skip",
+                         encoding="utf-8", encoding_errors="replace")
+        df.columns = [str(c).strip().lower() for c in df.columns]
+        return df
+    except Exception as e:
+        print(f"[FEEDBACK] Errore lettura: {e}")
+        return None
+
+
 def get_trade_stats():
+    """
+    Statistiche per simbolo.
+
+    FIX: prima si usava SOLO feedback.csv se esisteva, scartando del tutto
+    PRP_TradeLog.csv. Bastava un singolo feedback per far sparire dalla
+    dashboard tutto lo storico dei trade. Ora le due fonti vengono UNITE
+    e deduplicate per ticket.
+    """
+    frames = []
+
+    df_log = read_trade_log()
+    if df_log is not None and "symbol" in df_log.columns:
+        frames.append(df_log)
+
+    df_fb = read_feedback_log()
+    if df_fb is not None and "symbol" in df_fb.columns:
+        frames.append(df_fb)
+
+    if not frames:
+        return {}
+
+    try:
+        df = pd.concat(frames, ignore_index=True, sort=False)
+    except Exception as e:
+        print(f"[STATS] Errore concat: {e}")
+        return {}
+
+    if "symbol" not in df.columns:
+        return {}
+
+    # Dedup per ticket (lo stesso trade puo' stare sia nel log sia nel feedback)
+    if "ticket" in df.columns:
+        tick = pd.to_numeric(df["ticket"], errors="coerce")
+        df = df[tick.isna() | ~tick.duplicated(keep="last")]
+
+    df = df[df["symbol"].notna()]
+    df["symbol_clean"] = df["symbol"].map(normalize_symbol)
+    df = df[df["symbol_clean"].str.len() >= 6]
+    if df.empty:
+        return {}
+
+    if "rv" in df.columns:
+        df["rv_num"] = pd.to_numeric(df["rv"], errors="coerce").fillna(0.0)
+    else:
+        df["rv_num"] = 0.0
+    df["rv_abs"] = df["rv_num"].abs()
+
+    if "profit" in df.columns:
+        df["profit_num"] = pd.to_numeric(df["profit"], errors="coerce")
+    else:
+        df["profit_num"] = np.nan
+
+    # 'won' puo' essere true/false/True/1/0 a seconda della sorgente;
+    # se manca lo deduciamo dal profitto.
+    if "won" in df.columns:
+        won_str = df["won"].astype(str).str.lower().str.strip()
+        won = won_str.isin(["true", "1", "1.0", "yes", "win"])
+        unknown = ~won_str.isin(["true", "false", "1", "0", "1.0", "0.0",
+                                 "yes", "no", "win", "loss"])
+        won = won.where(~unknown, df["profit_num"] > 0)
+    else:
+        won = df["profit_num"] > 0
+    df["won_bool"] = won.fillna(False)
+
     trade_stats = {}
-    path = FEEDBACK_PATH if os.path.exists(FEEDBACK_PATH) else TRADE_LOG_PATH
-    if os.path.exists(path):
-        try:
-            sep = ";" if path.endswith(".csv") and "TradeLog" in path else ","
-            df = pd.read_csv(path, sep=sep, on_bad_lines="skip")
-            df.columns = [c.lower() for c in df.columns]
-            if "symbol" in df.columns and "rv" in df.columns:
-                df["symbol_clean"] = df["symbol"].astype(str).str.upper().str.strip().str.replace("+", "")
-                df["rv"] = pd.to_numeric(df["rv"], errors="coerce").fillna(0)
-                df["rv_abs"] = df["rv"].abs()
-                for sym, group in df.groupby("symbol_clean"):
-                    count = len(group)
-                    avg_rv = float(group["rv_abs"].mean()) if count > 0 else 0
-                    max_rv = float(group["rv_abs"].max()) if count > 0 else 0
-                    win_rate = 0.0
-                    if "won" in group.columns:
-                        won_col = group["won"].astype(str).str.lower().str.strip()
-                        win_rate = float((won_col == "true").mean() * 100)
-                    trade_stats[sym] = {
-                        "count": count,
-                        "avg_rv": round(avg_rv, 1),
-                        "max_rv": round(max_rv, 1),
-                        "win_rate": round(win_rate, 1)
-                    }
-        except Exception as e:
-            print(f"[STATS] Errore: {e}")
+    for sym, g in df.groupby("symbol_clean"):
+        count = int(len(g))
+        if count == 0:
+            continue
+        total_profit = float(g["profit_num"].sum(skipna=True)) \
+            if g["profit_num"].notna().any() else 0.0
+        trade_stats[sym] = {
+            "count": count,
+            "avg_rv": round(float(g["rv_abs"].mean()), 1),
+            "max_rv": round(float(g["rv_abs"].max()), 1),
+            "win_rate": round(float(g["won_bool"].mean() * 100), 1),
+            "profit": round(total_profit, 2),
+        }
     return trade_stats
 
 
 def get_recent_trades(limit=20):
+    """Ultimi trade: unisce TradeLog e feedback, piu' recenti per ultimi."""
+    frames = []
+    df_log = read_trade_log()
+    if df_log is not None:
+        frames.append(df_log)
+    df_fb = read_feedback_log()
+    if df_fb is not None:
+        frames.append(df_fb)
+    if not frames:
+        return []
+
+    try:
+        df = pd.concat(frames, ignore_index=True, sort=False)
+    except Exception as e:
+        print(f"[TRADES] Errore concat: {e}")
+        return []
+
+    if df.empty or "symbol" not in df.columns:
+        return []
+
+    if "ticket" in df.columns:
+        tick = pd.to_numeric(df["ticket"], errors="coerce")
+        df = df[tick.isna() | ~tick.duplicated(keep="last")]
+
+    # Ordina cronologicamente se abbiamo un riferimento temporale
+    for tcol in ("closetime", "timestamp", "opentime"):
+        if tcol in df.columns:
+            parsed = pd.to_datetime(df[tcol], errors="coerce", format="mixed")
+            if parsed.notna().any():
+                df = df.assign(_t=parsed).sort_values("_t", na_position="first")
+            break
+
     trades = []
-    if os.path.exists(TRADE_LOG_PATH):
-        try:
-            df = pd.read_csv(TRADE_LOG_PATH, sep=";", on_bad_lines="skip")
-            df.columns = [c.lower() for c in df.columns]
-            for _, row in df.tail(limit).iterrows():
-                trades.append({
-                    "symbol": str(row.get("symbol", "")),
-                    "direction": str(row.get("direction", "")),
-                    "module": str(row.get("module", "")),
-                    "pips": float(row.get("pips", 0)) if pd.notna(row.get("pips")) else 0,
-                    "profit": float(row.get("profit", 0)) if pd.notna(row.get("profit")) else 0,
-                    "won": str(row.get("won", "")).lower() == "true"
-                })
-        except Exception as e:
-            print(f"[TRADES] Errore: {e}")
+    for _, row in df.tail(limit).iterrows():
+        profit = pd.to_numeric(row.get("profit"), errors="coerce")
+        pips = pd.to_numeric(row.get("pips"), errors="coerce")
+        profit = float(profit) if pd.notna(profit) else 0.0
+        pips = float(pips) if pd.notna(pips) else 0.0
+
+        won_raw = str(row.get("won", "")).lower().strip()
+        if won_raw in ("true", "1", "1.0", "yes", "win"):
+            won = True
+        elif won_raw in ("false", "0", "0.0", "no", "loss"):
+            won = False
+        else:
+            won = profit > 0
+
+        module = str(row.get("module", "") or "")
+        trades.append({
+            "symbol": normalize_symbol(row.get("symbol", "")),
+            "direction": str(row.get("direction", "") or "").upper(),
+            "module": module,
+            "pips": round(pips, 1),
+            "profit": round(profit, 2),
+            "won": bool(won),
+        })
     return trades
 
 
@@ -195,41 +434,121 @@ def get_recent_trades(limit=20):
 #  ENDPOINTS
 # ============================================================
 
-@app.route("/health", methods=["GET"])
+@app.route("/", methods=["GET"])
+def index():
+    # Prima la root rispondeva 404: ora porta direttamente alla dashboard.
+    return redirect("/dashboard", code=302)
+
+
+@app.route("/favicon.ico")
+def favicon():
+    return Response(status=204)
+
+
+@app.route("/health", methods=["GET", "HEAD"])
 def health():
-    return jsonify({"status": "ok", "version": "5.3", "time": datetime.now(timezone.utc).isoformat()})
+    return jsonify({
+        "status": "ok",
+        "version": SERVER_VERSION,
+        "time": datetime.now(timezone.utc).isoformat(),
+    })
 
 
-@app.route("/ea_status", methods=["POST"])
+@app.route("/ea_status", methods=["POST", "GET"])
 def receive_ea_status():
     global ea_status
+    if request.method == "GET":
+        # Utile per verificare lo stato dal browser senza dover usare l'EA.
+        return jsonify(sanitize_for_json(load_ea_status()))
     try:
-        data = request.get_json(force=True)
+        data = parse_ea_json()
         if not data:
             return jsonify({"status": "error", "message": "No JSON"}), 200
-        for key in list(ea_status.keys()):
-            if key in data:
-                ea_status[key] = data[key]
-        ea_status["last_update"] = datetime.now(timezone.utc).isoformat()
-        with open(EA_STATUS_PATH, "w") as f:
-            json.dump(ea_status, f, indent=2)
-        return jsonify({"status": "ok", "config": load_ea_config(), "server_time": ea_status["last_update"]})
+
+        with _write_lock:
+            # Riparte dallo stato su disco: con gunicorn il processo puo'
+            # essere riavviato da Render e la variabile in memoria si azzera.
+            current = load_ea_status()
+            for key in DEFAULT_EA_STATUS:
+                if key == "peaks":
+                    continue  # gestito sotto con merge, non con sostituzione
+                if key in data:
+                    current[key] = data[key]
+
+            # I peaks arrivano dall'EA come dict e vanno uniti, non sostituiti,
+            # cosi' non si perdono i simboli assenti nell'ultimo invio.
+            incoming_peaks = data.get("peaks")
+            if isinstance(incoming_peaks, dict):
+                peaks = dict(current.get("peaks") or {})
+                for sym, val in incoming_peaks.items():
+                    try:
+                        peaks[normalize_symbol(sym)] = float(val)
+                    except (TypeError, ValueError):
+                        continue
+                current["peaks"] = peaks
+
+            current["last_update"] = datetime.now(timezone.utc).isoformat()
+            if current.get("warmup_ok"):
+                current["warmup_last"] = current["last_update"]
+
+            ea_status = current
+            save_ea_status(current)
+
+        print(f"[SYNC] EA ok | bal={current.get('balance')} "
+              f"eq={current.get('equity')} open={current.get('open_trades')}")
+        return jsonify({
+            "status": "ok",
+            "config": load_ea_config(),
+            "server_time": current["last_update"],
+        })
     except Exception as e:
+        print(f"[SYNC] Errore: {e}")
         return jsonify({"status": "error", "message": str(e)}), 200
 
 
 @app.route("/feedback", methods=["POST"])
 def receive_feedback():
     try:
-        data = request.get_json(force=True)
+        data = parse_ea_json()
         if not data:
             return jsonify({"status": "error", "message": "No JSON"}), 200
-        new_row = pd.DataFrame([data])
-        header_needed = not os.path.exists(FEEDBACK_PATH)
-        new_row.to_csv(FEEDBACK_PATH, mode="a", header=header_needed, index=False)
-        total_fb = len(pd.read_csv(FEEDBACK_PATH)) if os.path.exists(FEEDBACK_PATH) else 0
+
+        data.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
+        if "symbol" in data:
+            data["symbol"] = normalize_symbol(data["symbol"])
+
+        # Riga allineata SEMPRE allo schema canonico: i campi mancanti restano
+        # vuoti invece di spostare le colonne successive.
+        row = {col: data.get(col, "") for col in FEEDBACK_COLUMNS}
+        # Eventuali campi extra inviati dall'EA non vengono persi.
+        extra = {k: v for k, v in data.items() if k not in FEEDBACK_COLUMNS}
+
+        with _write_lock:
+            header_needed = (
+                not os.path.exists(FEEDBACK_PATH)
+                or os.path.getsize(FEEDBACK_PATH) == 0
+            )
+            if not header_needed:
+                # Se un vecchio file ha un header diverso lo migriamo, altrimenti
+                # continueremmo ad appendere righe disallineate.
+                with open(FEEDBACK_PATH, "r", encoding="utf-8") as f:
+                    current_header = f.readline().strip()
+                if current_header != ",".join(FEEDBACK_COLUMNS):
+                    migrate_feedback_file()
+
+            pd.DataFrame([row], columns=FEEDBACK_COLUMNS).to_csv(
+                FEEDBACK_PATH, mode="a", header=header_needed,
+                index=False, encoding="utf-8"
+            )
+            total_fb = count_csv_rows(FEEDBACK_PATH)
+
+        if extra:
+            print(f"[FEEDBACK] Campi extra ignorati nello schema: {list(extra)}")
+        print(f"[FEEDBACK] OK ticket={row.get('ticket')} sym={row.get('symbol')} "
+              f"profit={row.get('profit')} (tot={total_fb})")
         return jsonify({"status": "ok", "total_feedback": total_fb})
     except Exception as e:
+        print(f"[FEEDBACK] Errore: {e}")
         return jsonify({"status": "error", "message": str(e)}), 200
 
 
@@ -298,17 +617,26 @@ def update_ea_config():
 def dashboard_data():
     try:
         cfg = load_ea_config()
-        status = dict(ea_status)
-        if os.path.exists(EA_STATUS_PATH):
+        status = load_ea_status()
+
+        # Età del last_update calcolata lato server: il browser puo' avere
+        # l'orologio sfasato o un fuso diverso e la dashboard mostrava
+        # "EA offline" anche con l'EA connesso.
+        age = None
+        if status.get("last_update"):
             try:
-                with open(EA_STATUS_PATH, "r") as f:
-                    saved = json.load(f)
-                    status.update(saved)
-            except:
-                pass
+                lu = datetime.fromisoformat(str(status["last_update"]))
+                if lu.tzinfo is None:
+                    lu = lu.replace(tzinfo=timezone.utc)
+                age = max((datetime.now(timezone.utc) - lu).total_seconds(), 0)
+            except Exception:
+                age = None
+        status["age_seconds"] = age
+        status["online"] = age is not None and age < 600
+
         payload = {
             "ea": status,
-            "server": {"version": "5.3", "time": datetime.now(timezone.utc).isoformat()},
+            "server": {"version": SERVER_VERSION, "time": datetime.now(timezone.utc).isoformat()},
             "config": cfg,
             "trade_stats": get_trade_stats(),
             "trade_history": get_recent_trades(20)
@@ -330,7 +658,9 @@ def get_stats():
 
 @app.route("/dashboard", methods=["GET"])
 def dashboard_page():
-    html = """<!DOCTYPE html>
+    # NB: raw string (r""") -> le sequenze come \' non vengono interpretate da
+    # Python e non possono piu' rompere il JavaScript della dashboard.
+    html = r"""<!DOCTYPE html>
 <html>
 <head>
 <title>Radar Executor Dashboard</title>
@@ -478,6 +808,8 @@ const API = window.location.origin;
 function fmt(v, d=2){ return (v!=null && !isNaN(v)) ? Number(v).toFixed(d) : '-'; }
 function pnlClass(v){ return v>0?'green':v<0?'red':'white'; }
 
+let failCount = 0;
+
 function refresh(){
   const lastUpdateEl = document.getElementById('lastUpdate');
   
@@ -499,7 +831,10 @@ function refresh(){
       const peaks = ea.peaks || {};
 
       const dot = document.getElementById('eaDot');
-      const age = ea.last_update ? ((Date.now() - new Date(ea.last_update)) / 1000 / 60) : 999;
+      // Usa l'eta' calcolata dal server (immune da orologio/fuso del browser).
+      const age = (ea.age_seconds != null)
+        ? ea.age_seconds / 60
+        : (ea.last_update ? ((Date.now() - new Date(ea.last_update)) / 1000 / 60) : 999);
 
       if (age < 5) {
         dot.className = 'status-dot dot-green';
@@ -507,11 +842,15 @@ function refresh(){
       } else if (age < 30) {
         dot.className = 'status-dot dot-yellow';
         document.getElementById('eaStatus').textContent = 'EA ' + Math.round(age) + 'm fa';
+      } else if (ea.last_update) {
+        dot.className = 'status-dot dot-red';
+        document.getElementById('eaStatus').textContent = 'EA offline (' + Math.round(age) + 'm)';
       } else {
         dot.className = 'status-dot dot-gray';
-        document.getElementById('eaStatus').textContent = 'EA offline';
+        document.getElementById('eaStatus').textContent = 'EA mai connesso';
       }
 
+      failCount = 0;
       lastUpdateEl.textContent = 'Aggiornato: ' + new Date().toLocaleTimeString('it-IT');
       lastUpdateEl.style.color = '#666';
       
@@ -554,7 +893,7 @@ function refresh(){
           </tr>`;
         }).join('');
       } else {
-        statsTable.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#666;padding:12px;">In attesa del primo sync dell\'EA...</td></tr>';
+        statsTable.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#666;padding:12px;">In attesa del primo sync dell&apos;EA...</td></tr>';
       }
 
       const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val ?? ''; };
@@ -607,12 +946,15 @@ function refresh(){
     })
     .catch(e => {
       console.error('Dashboard fetch error:', e);
-      lastUpdateEl.textContent = '❌ Errore connessione al server';
+      failCount++;
+      const detail = (e && e.message) ? e.message : 'errore sconosciuto';
+      lastUpdateEl.textContent = '❌ Errore connessione (' + failCount + '): ' + detail;
       lastUpdateEl.style.color = '#ef5350';
-      
-      // Mostra più dettagli nella console
-      if (e.message.includes('Failed to fetch')) {
-        console.warn('%c[Dashboard] Possibile problema di rete o server offline', 'color:#ff9800');
+      const dot = document.getElementById('eaDot');
+      if (dot) dot.className = 'status-dot dot-red';
+      document.getElementById('eaStatus').textContent = 'Server irraggiungibile';
+      if (detail.indexOf('Failed to fetch') >= 0) {
+        console.warn('%c[Dashboard] Server offline o in cold start (Render free tier: ~50s)', 'color:#ff9800');
       }
     });
 }
@@ -713,6 +1055,26 @@ refresh();
     return html
 
 
+# ============================================================
+#  INIT (eseguito anche sotto gunicorn)
+# ============================================================
+def startup():
+    os.makedirs(DATA_DIR, exist_ok=True)
+    global ea_status
+    ea_status = load_ea_status()
+    print(f"[INIT] Profit Radar AI Server v{SERVER_VERSION}")
+    print(f"[INIT] Data dir: {os.path.abspath(DATA_DIR)}")
+    print(f"[INIT] TradeLog: {'OK' if os.path.exists(TRADE_LOG_PATH) else 'assente'} | "
+          f"Feedback: {count_csv_rows(FEEDBACK_PATH)} righe")
+    print(f"[INIT] Ultimo sync EA: {ea_status.get('last_update') or 'mai'}")
+
+
+startup()
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    print(f"🚀 Profit Radar AI Server v5.3 avviato su porta {port}")
+    print(f"🚀 Profit Radar AI Server v{SERVER_VERSION} avviato su porta {port}")
+    # BUG FIX: mancava app.run(), quindi `python app.py` stampava il messaggio
+    # e usciva subito senza mai mettersi in ascolto.
+    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
