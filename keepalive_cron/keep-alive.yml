@@ -1,0 +1,50 @@
+name: Keep Render Alive
+
+# Terzo livello di difesa anti-sleep: funziona anche se il servizio Render e'
+# gia' spento (il self-ping interno, in quel caso, non puo' partire perche' il
+# processo non esiste) e anche a MT4 chiuso (weekend / VPS spento).
+#
+# NB: il cron di GitHub Actions non e' puntuale al minuto: in caso di carico
+# puo' slittare di diversi minuti. Per questo l'intervallo e' 10 min invece di
+# 14, e ogni run fa piu' ping distanziati.
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: keep-alive
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Ping del servizio Render
+        env:
+          # Override possibile con una repo variable, se cambia l'URL.
+          BASE_URL: ${{ vars.RENDER_URL || 'https://profit-radar-ai.onrender.com' }}
+        run: |
+          set -u
+          # 3 ping distanziati di 3 min: copre lo slittamento dello scheduler
+          # e risveglia il servizio se era gia' andato in sleep.
+          for i in 1 2 3; do
+            echo "--- Ping $i/3 $(date -u +%H:%M:%S) UTC ---"
+            code=$(curl -sS --max-time 90 --retry 3 --retry-delay 10 \
+                        --retry-all-errors \
+                        -o /tmp/resp.txt -w '%{http_code}' \
+                        "$BASE_URL/health?src=cron" || echo "000")
+            echo "HTTP $code | $(head -c 200 /tmp/resp.txt)"
+            if [ "$code" != "200" ]; then
+              echo "::warning::Ping $i fallito (HTTP $code)"
+            fi
+            [ "$i" -lt 3 ] && sleep 180 || true
+          done
+          # Non fallisce il workflow su un singolo ping KO: un cold start puo'
+          # superare i timeout ma il servizio si e' comunque risvegliato.
+          echo "Keep-alive completato."
