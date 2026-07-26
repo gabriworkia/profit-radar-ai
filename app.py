@@ -274,13 +274,46 @@ def migrate_feedback_file():
 
 
 def read_trade_log():
-    """Legge PRP_TradeLog.csv (separatore ';') in modo tollerante."""
+    """
+    Legge PRP_TradeLog.csv (separatore ';') in modo tollerante.
+
+    FIX: l'EA scrive un campo 'Comment' finale (es. "PRP_STD_...[sl]") che NON
+    e' dichiarato nell'header. Risultato: 171 righe su 225 avevano 21 campi
+    invece di 20 e venivano SCARTATE da on_bad_lines="skip" -> in dashboard
+    arrivava solo il 24% dei trade.
+    Ora l'header viene esteso dinamicamente alle colonne realmente presenti.
+    """
     if not os.path.exists(TRADE_LOG_PATH):
         return None
     try:
-        df = pd.read_csv(TRADE_LOG_PATH, sep=";", on_bad_lines="skip",
-                         encoding="utf-8", encoding_errors="replace")
+        with open(TRADE_LOG_PATH, "r", encoding="utf-8", errors="replace") as f:
+            header = f.readline().strip().lstrip("\ufeff")
+            # Numero massimo di campi presenti nel file (righe con extra)
+            max_fields = len(header.split(";"))
+            for line in f:
+                line = line.strip()
+                if line:
+                    max_fields = max(max_fields, len(line.split(";")))
+
+        names = [c.strip() for c in header.split(";")]
+        # Nomi per le colonne extra non dichiarate nell'header
+        extra = max_fields - len(names)
+        if extra > 0:
+            names += (["comment"] if extra == 1
+                      else [f"extra_{i+1}" for i in range(extra)])
+
+        # header=None + skiprows=1: 'names' ha piu' colonne dell'header reale,
+        # quindi la prima riga va saltata manualmente.
+        df = pd.read_csv(
+            TRADE_LOG_PATH, sep=";", header=None, names=names, skiprows=1,
+            on_bad_lines="skip", encoding="utf-8", encoding_errors="replace",
+            engine="python",
+        )
         df.columns = [str(c).strip().lower().replace("%", "_pct") for c in df.columns]
+        # L'EA scrive righe con terminatore \r\n: ripulisce i valori testuali
+        for col in df.columns:
+            if df[col].dtype == object:
+                df[col] = df[col].astype(str).str.strip().str.strip("\r")
         return df
     except Exception as e:
         print(f"[TRADELOG] Errore lettura: {e}")
